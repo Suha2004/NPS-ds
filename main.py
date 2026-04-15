@@ -22,7 +22,7 @@ app.add_middleware(
 )
 
 gdf = gpd.read_file(
-    "./data/India_State_Boundary.shp",
+    "./data/IndiaStatesBoundaryShapes/India_State_Boundary.shp",
 )
 
 print(gdf.columns)
