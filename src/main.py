@@ -11,9 +11,12 @@ import numpy as np
 import geopandas as gpd
 from shapely.geometry import Point
 from scipy.spatial import KDTree
+from pathlib import Path
 
-MODEL_PATH = "../models"
-DATA_PATH = "../data"
+BASE_DIR = Path(__file__).resolve().parent.parent
+MODEL_PATH = BASE_DIR / "models"
+DATA_PATH = BASE_DIR / "data"
+FRONTEND_DIR = BASE_DIR / "Frontend"
 
 app = FastAPI(title="NetPaySense API")
 
@@ -25,8 +28,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-print(DATA_PATH + "/IndiaStatesBoundaryShapes/India_State_Boundary.shp")
-gdf = gpd.read_file(DATA_PATH + "/IndiaStatesBoundaryShapes/India_State_Boundary.shp")
+gdf = gpd.read_file(DATA_PATH / "IndiaStatesBoundaryShapes/India_State_Boundary.shp")
 
 gdf = gdf.to_crs(epsg=4326) #  converts the format to latitude and longitude
 
@@ -78,15 +80,15 @@ class OoklaNN(nn.Module):
 
 # Load Models
 ookla_model = OoklaNN(input_size=5)
-ookla_model.load_state_dict(torch.load(MODEL_PATH + '/ookla_nn.pth'))
+ookla_model.load_state_dict(torch.load(MODEL_PATH / 'ookla_nn.pth'))
 ookla_model.eval()
-ookla_scaler = joblib.load(MODEL_PATH + '/ookla_scaler.pkl')
+ookla_scaler = joblib.load(MODEL_PATH / 'ookla_scaler.pkl')
 
 # Load Model 2
-signal_model = joblib.load(MODEL_PATH + '/signal_xgb.pkl')
+signal_model = joblib.load(MODEL_PATH / 'signal_xgb.pkl')
 
 # Load Look-up Data for Model 1 (Nearest Neighbor search)
-look_up_df = pd.read_csv(DATA_PATH + '/final_dataset.csv')
+look_up_df = pd.read_csv(DATA_PATH / 'final_dataset.csv')
 look_up_df['download_mbps'] = look_up_df['avg_d_kbps'] / 1000
 look_up_df['upload_mbps'] = look_up_df['avg_u_kbps'] / 1000
 look_up_df['latency_ms'] = look_up_df['avg_lat_ms']
@@ -220,7 +222,7 @@ async def predict(req: PredictionRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 # ----------- FRONTEND -----------
-app.mount("/", StaticFiles(directory="Frontend/NetPaySense-main", html=True), name="static")
+app.mount("/", StaticFiles(directory=FRONTEND_DIR / "NetPaySense-main", html=True), name="static")
 
 # ----------- RUN -----------
 if __name__ == "__main__":
