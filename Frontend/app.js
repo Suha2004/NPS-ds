@@ -1,18 +1,22 @@
-// ── Global Config ──
-const BANK_DOMAINS = {
-  "State Bank of India": "sbi.co.in",
-  "HDFC Bank": "hdfcbank.com",
-  "ICICI Bank": "icicibank.com",
-  "Punjab National Bank": "pnbindia.in",
-  "Bank Of Baroda": "bankofbaroda.in",
-  "Canara Bank": "canarabank.com",
-  "Axis Bank": "axisbank.com",
-  "Airtel Payments Bank": "airtel.in",
-  "Kotak Mahindra Bank": "kotak.com",
-  "AU Small Finance Bank": "aubank.in"
-};
+// ── Global Config (With Safety Lock) ──
+if (typeof window.APP_LOADED === 'undefined') {
+  window.APP_LOADED = true;
 
-const BANK_DROPDOWN_OPTIONS = [
+  window.BANK_DOMAINS = {
+    "State Bank of India": "sbi.co.in",
+    "HDFC Bank": "hdfcbank.com",
+    "ICICI Bank": "icicibank.com",
+    "Punjab National Bank": "pnbindia.in",
+    "Bank Of Baroda": "bankofbaroda.in",
+    "Canara Bank": "canarabank.com",
+    "Axis Bank": "axisbank.com",
+    "Airtel Payments Bank": "airtel.in",
+    "Kotak Mahindra Bank": "kotak.com",
+    "AU Small Finance Bank": "aubank.in"
+  };
+}
+
+window.BANK_DROPDOWN_OPTIONS = [
   { value: "", name: "Choose Bank" },
   { value: "State Bank of India", name: "State Bank of India (SBI)" },
   { value: "HDFC Bank", name: "HDFC Bank" },
@@ -56,10 +60,10 @@ function initCustomDropdown() {
   if (!container) return;
 
   container.innerHTML = BANK_DROPDOWN_OPTIONS
-    .filter(opt => opt.value !== "") // Don't show "Choose Bank" in the list
+    .filter(opt => opt.value !== "") 
     .map(opt => {
       const domain = BANK_DOMAINS[opt.value];
-      const logoHtml = domain ? `<img src="https://www.google.com/s2/favicons?domain=${domain}&sz=64" class="bank-logo" onerror="this.style.display='none'">` : '';
+      const logoHtml = domain ? `<img src="https://www.google.com/s2/favicons?domain=${domain}&sz=64" class="bank-logo" onerror="this.src='https://cdn-icons-png.flaticon.com/64/2830/2830284.png'">` : '';
       return `<div class="custom-select-option" onclick="selectCustomBank('${opt.value}', '${opt.name}')">
         ${logoHtml} ${opt.name}
       </div>`;
@@ -220,7 +224,7 @@ function renderLiveBankGrid(banks, lastUpdated) {
     return `
       <div class="bank-grid-card fade-in">
         <div class="bank-grid-logo-wrap">
-          <img src="${logoSrc}" onerror="this.src='https://api.dicebear.com/7.x/initials/svg?seed=${b.bank}'" alt="${b.bank}">
+          <img src="${logoSrc}" onerror="this.src='https://cdn-icons-png.flaticon.com/64/2830/2830284.png'" alt="${b.bank}">
         </div>
         <span class="bank-grid-name">${b.bank}</span>
         <span class="bank-grid-status-badge ${statusClass}">${b.status}</span>
@@ -271,7 +275,8 @@ function initScrollTop() {
 }
 
 // ── Risk Gauge (Canvas) ──
-function drawGauge(canvasId, labelId, tier) {
+// ── Risk Gauge (Canvas) ──
+function drawGauge(canvasId, score, labelId) {
   const canvas = document.getElementById(canvasId);
   if (!canvas) return;
   const ctx = canvas.getContext('2d');
@@ -289,42 +294,58 @@ function drawGauge(canvasId, labelId, tier) {
   ctx.lineCap = 'round';
   ctx.stroke();
 
-  // Colored arc
-  const tierMap = {
-    good: { end: Math.PI * 1.33, color: '#22c55e', label: 'Low Risk' },
-    mid: { end: Math.PI * 1.66, color: '#f59e0b', label: 'Medium Risk' },
-    poor: { end: Math.PI * 2, color: '#ef4444', label: 'High Risk' }
-  };
-  const t = tierMap[tier] || tierMap.mid;
+  // CONVERT SUCCESS TO RISK
+  // 5% Success = 95% Risk (Right)
+  // 99% Success = 1% Risk (Left)
+  const riskValue = Math.min(100, Math.max(0, 100 - score));
+  const normalizedRisk = riskValue / 100;
+  const needleAngle = startAngle + (normalizedRisk * Math.PI);
+  
+  // COLOR BY RISK
+  let riskColor = '#22c55e'; // Green for Low Risk
+  let riskStatus = 'Low Risk';
+  
+  if (riskValue > 65) {
+    riskColor = '#ef4444'; // Red for High Risk
+    riskStatus = 'High Risk';
+  } else if (riskValue > 30) {
+    riskColor = '#f59e0b'; // Amber for Medium Risk
+    riskStatus = 'Medium Risk';
+  }
+
+  // Draw the progress arc up to the needle
   ctx.beginPath();
-  ctx.arc(cx, cy, r, startAngle, t.end);
-  ctx.strokeStyle = t.color;
+  ctx.arc(cx, cy, r, startAngle, needleAngle);
+  ctx.strokeStyle = riskColor;
   ctx.stroke();
 
-  // Needle
-  const needleAngle = t.end;
+  // Draw the needle
   ctx.beginPath();
   ctx.moveTo(cx, cy);
   ctx.lineTo(cx + Math.cos(needleAngle) * (r - 10), cy + Math.sin(needleAngle) * (r - 10));
   ctx.strokeStyle = '#1e40af';
-  ctx.lineWidth = 3;
+  ctx.lineWidth = 4;
   ctx.stroke();
 
-  // Center dot
+  // Center hub
   ctx.beginPath();
-  ctx.arc(cx, cy, 6, 0, 2 * Math.PI);
+  ctx.arc(cx, cy, 8, 0, 2 * Math.PI);
   ctx.fillStyle = '#1e40af';
   ctx.fill();
 
   // Labels
   ctx.font = '600 11px Inter, sans-serif';
   ctx.fillStyle = '#94a3b8';
-  ctx.textAlign = 'left'; ctx.fillText('Low', cx - r - 2, cy - 4);
-  ctx.textAlign = 'right'; ctx.fillText('High', cx + r + 2, cy - 4);
+  ctx.textAlign = 'left'; ctx.fillText('Low Risk', cx - r - 2, cy - 4);
+  ctx.textAlign = 'right'; ctx.fillText('High Risk', cx + r + 2, cy - 4);
 
+  // Update text label below
   if (labelId) {
     const lbl = document.getElementById(labelId);
-    if (lbl) { lbl.textContent = t.label; lbl.className = `risk-meter-label ${tier}`; }
+    if (lbl) {
+      lbl.textContent = riskStatus;
+      lbl.style.color = riskColor;
+    }
   }
 }
 
@@ -464,12 +485,16 @@ function getMyLocation() {
   document.getElementById('skeleton-loc').classList.remove('hidden');
   document.getElementById('skeleton-net').classList.remove('hidden');
 
-  if (!navigator.geolocation) { useLiveLocation(12.9716, 77.5946, 'Bengaluru'); return; }
+  if (!navigator.geolocation) { useLiveLocation(12.9716, 77.5946, 'Bengaluru', null); return; }
 
   navigator.geolocation.getCurrentPosition(
     async pos => {
       const lat = pos.coords.latitude, lng = pos.coords.longitude;
       let name = `${lat.toFixed(4)}, ${lng.toFixed(4)}`;
+
+      // Update UI for Pulse Test
+      btn.textContent = '🚀 Probing Live...';
+
       try {
         const res = await fetch(`https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json`);
         const data = await res.json();
@@ -478,13 +503,22 @@ function getMyLocation() {
         const city = a.city || a.town || a.state_district || '';
         name = area ? (city && city !== area ? `${area}, ${city}` : area) : name;
       } catch { }
-      useLiveLocation(lat, lng, name);
+
+      // 🛰️ Run Pulse Test
+      let liveMetrics = null;
+      try {
+        const pulseRes = await fetch('/pulse-test');
+        liveMetrics = await pulseRes.json();
+        if (liveMetrics.error) liveMetrics = null;
+      } catch (e) { console.warn("Pulse test failed", e); }
+
+      useLiveLocation(lat, lng, name, liveMetrics);
     },
-    () => useLiveLocation(12.9716, 77.5946, 'Bengaluru')
+    () => useLiveLocation(12.9716, 77.5946, 'Bengaluru', null)
   );
 }
 
-function useLiveLocation(lat, lng, name) {
+function useLiveLocation(lat, lng, name, liveMetrics) {
   isLiveSession = true; // ✅ This is a live GPS check
   const btn = document.getElementById('geo-btn');
   btn.textContent = '📍 Fetch My Location';
@@ -494,7 +528,7 @@ function useLiveLocation(lat, lng, name) {
   document.getElementById('dashboard-panel').classList.add('hidden');
   document.getElementById('app-main').classList.remove('hidden');
   document.getElementById('loc-input').value = name;
-  runCheckWithCoords(name, lat, lng);
+  runCheckWithCoords(name, lat, lng, liveMetrics);
 }
 
 function runCheck() {
@@ -512,12 +546,12 @@ function runCheck() {
   runAnalyzing(raw, btn);
 }
 
-function runCheckWithCoords(name, lat, lng) {
+function runCheckWithCoords(name, lat, lng, liveMetrics = null) {
   const btn = document.getElementById('check-btn');
   btn.textContent = 'Checking…';
   btn.disabled = true;
   goStep(2);
-  runAnalyzingWithCoords(name, lat, lng, btn);
+  runAnalyzingWithCoords(name, lat, lng, btn, liveMetrics);
 }
 
 async function runAnalyzing(raw, btn) {
@@ -532,10 +566,11 @@ async function runAnalyzing(raw, btn) {
       lat = parseFloat(coordMatch[1]);
       lon = parseFloat(coordMatch[2]);
     } else {
-      // 1. Geocode text
-      const geoRes = await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(raw)}&format=json&limit=1`);
+      // 1. Geocode text (Adding context for better accuracy)
+      const query = raw.toLowerCase().includes('karnataka') ? raw : `${raw}, Karnataka, India`;
+      const geoRes = await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&limit=1`);
       const geoData = await geoRes.json();
-      if (!geoData.length) throw new Error('Location not found');
+      if (!geoData.length) throw new Error('Location not found. Try adding the district name.');
       lat = parseFloat(geoData[0].lat);
       lon = parseFloat(geoData[0].lon);
     }
@@ -548,9 +583,15 @@ async function runAnalyzing(raw, btn) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ lat, lon })
     });
+
+    if (res.status === 403) {
+      const errData = await res.json();
+      throw new Error(errData.message || 'Location outside of Karnataka');
+    }
+
     if (!res.ok) throw new Error(`Server Error: ${res.status}`);
     const data = await res.json();
-    lastNetworkScore = parseFloat(data.upi.match(/\d+/) || 90);
+    lastNetworkScore = parseFloat(data.upi.split('-').pop().match(/\d+\.?\d*/) || 90);
     currentSig = {
       tier: data.tier,
       label: data.label,
@@ -558,7 +599,8 @@ async function runAnalyzing(raw, btn) {
       badge: data.badge,
       dbm: data.dbm,
       type: data.type,
-      metrics: data.metrics
+      metrics: data.metrics,
+      serverVersion: data.server_version || "v3.2.1"
     };
     currentLat = data.lat;
     currentLng = data.lon;
@@ -599,14 +641,18 @@ async function runAnalyzing(raw, btn) {
   }
 }
 
-async function runAnalyzingWithCoords(name, lat, lng, btn) {
+async function runAnalyzingWithCoords(name, lat, lng, btn, liveMetrics = null) {
   rawLat = lat; rawLng = lng; // ✅ Save for feedback
   animateSteps();
   try {
     const res = await fetch('/predict', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ lat, lon: lng })
+      body: JSON.stringify({
+        lat,
+        lon: lng,
+        live_metrics: liveMetrics
+      })
     });
     if (!res.ok) throw new Error(`Server Error: ${res.status}`);
     const data = await res.json();
@@ -618,7 +664,8 @@ async function runAnalyzingWithCoords(name, lat, lng, btn) {
       badge: data.badge,
       dbm: data.dbm,
       type: data.type,
-      metrics: data.metrics
+      metrics: data.metrics,
+      serverVersion: data.server_version || "Old Server"
     };
 
     setTimeout(() => {
@@ -670,11 +717,23 @@ function populateSignal(sig) {
   const upiWrap = document.getElementById('upi-icon-wrap');
   upiWrap.className = `upi-icon-wrap ${sig.tier}`;
   document.getElementById('upi-icon').textContent = sig.tier === 'good' ? '✅' : sig.tier === 'mid' ? '⚠️' : '🚨';
-  const badge = document.getElementById('upi-badge');
-  badge.textContent = sig.badge;
-  badge.className = `upi-badge ${sig.tier}`;
-  // Draw gauge on results
-  setTimeout(() => drawGauge('results-risk-gauge', 'results-risk-label', sig.tier), 100);
+
+  // Version Check
+  const verEl = document.getElementById('debug-server-version');
+  if (verEl) verEl.textContent = `Backend: ${sig.serverVersion}`;
+
+  // Handle Verified/Operator display
+  const vBox = document.getElementById('results-verified-box');
+  const opName = document.getElementById('results-operator-name');
+  if (vBox && sig.metrics && sig.metrics.is_verified) {
+    vBox.classList.remove('hidden');
+    if (opName) opName.textContent = sig.metrics.operator || 'Mobile';
+  } else if (vBox) {
+    vBox.classList.add('hidden');
+  }
+  // Draw gauge on results (Extract numeric score from label)
+  const numericScore = parseFloat(sig.upi.split('-').pop().match(/\d+\.?\d*/) || 5);
+  setTimeout(() => drawGauge('results-risk-gauge', numericScore, 'results-risk-label'), 100);
 }
 
 function populateRecs(tier) {
@@ -686,6 +745,8 @@ function populateRecs(tier) {
     list.appendChild(li);
   });
 }
+
+// ── End of Main Functions ──
 
 function saveRecent(name, coords, sig) {
   // Store specifically for feedback / reinforcement learning
@@ -804,12 +865,7 @@ async function showResultsBankStatus() {
 
     // Update the main UPI Success UI with the combined final score
     const upiVal = document.getElementById('upi-value');
-    const upiBadge = document.getElementById('upi-badge');
     if (upiVal) upiVal.textContent = `${bankData.success_rate} - ${bankData.final_score}%`;
-    if (upiBadge) {
-      upiBadge.textContent = `${bankData.success_rate} Risk`;
-      upiBadge.className = `upi-badge ${bankData.success_rate.toLowerCase()}-risk`;
-    }
 
     container.classList.remove('hidden');
   } catch (e) { console.error("Bank fetch error", e); }
@@ -1026,7 +1082,7 @@ function initMap() {
 initTheme();
 initOnboarding();
 initScrollTop();
-renderRecents();
 initCustomDropdown();
+renderRecents();
 refreshBankStatus();
 setInterval(refreshBankStatus, 60000); // every minute
