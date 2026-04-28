@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
@@ -9,7 +9,9 @@ import joblib
 import os
 import json
 import threading
+import speedtest
 from datetime import datetime, timedelta
+from typing import Optional, List, Dict
 import pandas as pd
 import numpy as np
 import geopandas as gpd
@@ -40,6 +42,8 @@ app.add_middleware(
 @app.on_event("startup")
 async def startup_event():
     """Start the background scraper when the API starts."""
+    print(f"🔥 SERVER STARTING FROM: {os.path.abspath(__file__)}")
+    print(f"📂 FRONTEND ABSOLUTE PATH: {os.path.abspath(FRONTEND_DIR)}")
     clean_old_data() # 🔥 Run cleanup on startup
     
     # Start the background tasks
@@ -125,12 +129,13 @@ tree = KDTree(coords)
 class PredictionRequest(BaseModel):
     lat: float
     lon: float
-    rsrp: float = None
-    rsrq: float = None
-    snr: float = None
-    cqi: float = None
-    dbm: float = None
-    bank_name: str = None # User-selected bank
+    rsrp: Optional[float] = None
+    rsrq: Optional[float] = None
+    snr: Optional[float] = None
+    cqi: Optional[float] = None
+    dbm: Optional[float] = None
+    bank_name: Optional[str] = None # User-selected bank
+    live_metrics: Optional[Dict] = None # From speedtest-cli pulse check
 
 class BankPredictionRequest(BaseModel):
     bank: str
@@ -146,31 +151,35 @@ class FeedbackRequest(BaseModel):
 
 # ----------- UI LOGIC -----------
 def get_ui_data(quality_score, upi_score, community_alert=False):
-    # Class mapping: 0:Poor, 1:Mid, 2:Good
-    
-    # Community alert significantly increases risk
-    if community_alert:
-        return {
-            "tier": "poor", "bars": 1, "dbm": -105, "label": "Regional Failures",
-            "upi": f"Critical - {min(upi_score, 15):.1f}%", "badge": "COMMUNITY DOWNTIME", 
-            "rec": "🚨 Multiple payment failures reported here. Use Cash.", "type": "4G"
-        }
+    # Force consistency: The Score is the master
+    if community_alert or upi_score < 45:
+        tier = "poor"
+        badge = "High Risk" if not community_alert else "COMMUNITY DOWNTIME"
+        label = "Regional Failures" if community_alert else "Unstable Signal"
+        upi_label = f"Low Success - {upi_score:.1f}%"
+        rec = "🚨 Multiple payment failures reported here. Use Cash." if community_alert else "Risk of timeout. Carry cash backup."
+        bars = 1
+    elif upi_score < 75:
+        tier = "mid"
+        badge = "Medium Risk"
+        label = "Stable Connection"
+        upi_label = f"Mid Success - {upi_score:.1f}%"
+        rec = "Proceed with caution. WiFi preferred."
+        bars = 3
+    else:
+        tier = "good"
+        badge = "Low Risk"
+        label = "High Performance"
+        from datetime import datetime
+        now_str = datetime.now().strftime("%H:%M:%S")
+        upi_label = f"🚀 {now_str} - {upi_score:.1f}%"
+        rec = "Safe to proceed with any UPI amount."
+        bars = 5
 
-    if quality_score == 2: # Good
-        return {
-            "tier": "good", "bars": 5, "dbm": -65, "label": "High Performance",
-            "upi": f"Excellent - {upi_score:.1f}%", "badge": "Low Risk", "rec": "Safe to proceed with any UPI amount.", "type": "5G"
-        }
-    elif quality_score == 1: # Moderate
-        return {
-            "tier": "mid", "bars": 3, "dbm": -88, "label": "Stable Connection",
-            "upi": f"Fair - {upi_score:.1f}%", "badge": "Medium Risk", "rec": "Proceed with caution. WiFi preferred.", "type": "4G"
-        }
-    else: # Poor
-        return {
-            "tier": "poor", "bars": 1, "dbm": -110, "label": "Unstable Signal",
-            "upi": f"Risky - {upi_score:.1f}%", "badge": "High Risk", "rec": "Carry Cash - High chance of timeout.", "type": "4G"
-        }
+    return {
+        "tier": tier, "bars": bars, "dbm": -88, "label": label,
+        "upi": upi_label, "badge": badge, "rec": rec, "type": "4G/5G"
+    }
 
 # ----------- MAIN PREDICTION -----------
 @app.post("/predict")
@@ -183,15 +192,40 @@ async def predict(req: PredictionRequest):
         })
 
     try:
-        # 1. Spatial Lookup
+        # 1. Hybrid Spatial Lookup
+        # First, check the single nearest neighbor to see if we are in a known "Dead Zone"
         dist, idx = tree.query([req.lat, req.lon])
         nearest = look_up_df.iloc[idx]
+        
+        dn = nearest['download_mbps']
+        up = nearest['upload_mbps']
+        lat = nearest['latency_ms']
+        
+        # If either Download or Upload is "Suspect", we trust the risk immediately.
+        # This prevents hiding a "Dead Upload Zone" like Muthodi.
+        if dn > 15.0 and up > 2.0: 
+            dists_k, indices_k = tree.query([req.lat, req.lon], k=5)
+            neighbors = look_up_df.iloc[indices_k]
+            dn = neighbors['download_mbps'].mean()
+            up = neighbors['upload_mbps'].mean()
+            lat = neighbors['latency_ms'].mean()
+        
+        # Use the very nearest coordinates for display
         authentic_lat = float(nearest['lat'])
         authentic_lon = float(nearest['lon'])
 
         # 2. Network Quality Models
+        is_verified = False
+        live_operator = None
+        if req.live_metrics:
+            dn = req.live_metrics.get('download', dn)
+            up = req.live_metrics.get('upload', up)
+            lat = req.live_metrics.get('latency', lat)
+            live_operator = req.live_metrics.get('operator')
+            is_verified = True
+
         m1_features = pd.DataFrame([[
-            nearest['download_mbps'], nearest['upload_mbps'], nearest['latency_ms'],
+            dn, up, lat,
             authentic_lat, authentic_lon
         ]], columns=['download_mbps', 'upload_mbps', 'latency_ms', 'lat', 'lon'])
         m1_scaled = ookla_scaler.transform(m1_features)
@@ -200,32 +234,33 @@ async def predict(req: PredictionRequest):
             m1_out = ookla_model(torch.tensor(m1_scaled, dtype=torch.float32))
             m1_quality = torch.argmax(m1_out, dim=1).item()
             
-            # 🔥 Aggressive Dynamic Engine
+            # 🏎️ Speed & Latency Impact
             probs = torch.softmax(m1_out, dim=1)[0].detach().numpy()
             
-            # Base logic: Use probability to find the "Anchor" score
-            # (98% for Good, 65% for Mid, 15% for Poor)
-            base_anchor = (probs[0] * 15.0 + probs[1] * 65.0 + probs[2] * 98.0)
+            # Lower anchors for better variety
+            base_anchor = (probs[0] * 10.0 + probs[1] * 45.0 + probs[2] * 82.0)
             
-            # 🏎️ Speed & Latency Impact (Stronger)
-            dn = nearest['download_mbps']
-            lat = nearest['latency_ms']
-            
-            # Calculate a "Performance Offset"
-            if m1_quality == 2: # Good (12Mbps base)
-                offset = (dn - 12) * 0.4 - (lat - 30) * 0.15
-            elif m1_quality == 1: # Mid (3Mbps base)
-                offset = (dn - 5) * 2.0 - (lat - 80) * 0.25
+            # Dynamic offsets (Fine-tuned for variety)
+            if m1_quality == 2: # Good
+                # Speed adds gradually, latency penalizes harder
+                offset = (dn - 10) * 0.12 - (lat - 20) * 0.15
+            elif m1_quality == 1: # Mid
+                offset = (dn - 4) * 0.8 - (lat - 60) * 0.2
             else: # Poor
-                offset = (dn - 1) * 5.0 - (lat - 150) * 0.1
+                speed_bonus = max(0, (dn - 8) * 1.2) if dn > 8 else 0
+                offset = (dn - 1) * 1.5 - (lat - 100) * 0.3 + speed_bonus
                 
-            # 🌊 Micro-fluctuation (to mimic real-time network jitter)
-            jitter = (np.random.random() - 0.5) * 0.5 
+            upload_penalty = 0
+            if up < 0.6:
+                upload_penalty = 50 
+            elif up < 1.8:
+                upload_penalty = 15
             
-            upi_score = base_anchor + offset + jitter
+            jitter = (np.random.random() - 0.5) * 1.5
+            upi_score = base_anchor + offset + jitter - upload_penalty
             
-            # Final Safety Clamp
-            upi_score = max(5.0, min(99.7, upi_score))
+            # Cap it at 99.8 but make it harder to reach
+            upi_score = max(5.0, min(99.8, upi_score))
 
         if req.rsrp is not None and req.rsrq is not None:
             m2_features = np.array([[req.rsrp, req.rsrq, req.snr or 0, req.cqi or 10, req.dbm or -90]])
@@ -257,9 +292,10 @@ async def predict(req: PredictionRequest):
                 ui_data["rec"] = f"STOP: {req.bank_name} servers are currently DOWN. Use Cash."
                 bank_warning = f"{req.bank_name} servers are offline."
             elif status == "FLUCTUATING":
-                ui_data["badge"] = "High Risk (Bank Issues)"
-                ui_data["upi"] = "Low - 15-30%"
-                ui_data["rec"] = f"Warning: {req.bank_name} servers are unstable. Cash recommended."
+                ui_data["tier"] = "mid"
+                ui_data["badge"] = "Medium Risk (Bank Fluctuating)"
+                ui_data["upi"] = "Mid Success - 45-60%"
+                ui_data["rec"] = f"Warning: {req.bank_name} servers are unstable. Proceed with caution."
                 bank_warning = f"{req.bank_name} servers are fluctuating."
 
         return {
@@ -267,14 +303,44 @@ async def predict(req: PredictionRequest):
             "bars": ui_data["bars"], "dbm": ui_data["dbm"], "label": ui_data["label"],
             "upi": ui_data["upi"], "badge": ui_data["badge"], "type": ui_data["type"],
             "recommendation": ui_data["rec"], "confidence": f"{(final_quality + 1) * 30}%", 
-            "best_network": best_operator, "bank_warning": bank_warning,
-            "metrics": { "download": f"{nearest['download_mbps']:.2f} Mbps", "latency": f"{nearest['latency_ms']:.1f} ms" },
+            "best_network": live_operator or best_operator, "bank_warning": bank_warning,
+            "server_version": "v3.2.1",
+            "metrics": { 
+                "download": f"{dn:.2f} Mbps", 
+                "upload": f"{up:.2f} Mbps",
+                "latency": f"{lat:.1f} ms",
+                "is_verified": is_verified,
+                "operator": live_operator or best_operator
+            },
             "community_alert": has_alert
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 # ----------- BANK MONITORING API -----------
+@app.get("/pulse-test")
+async def pulse_test():
+    """Runs a real-time speed test (Ping, Download, Upload, Operator)."""
+    try:
+        st = speedtest.Speedtest()
+        st.get_best_server()
+        
+        ping = st.results.ping
+        # Perform download/upload tests
+        dn = st.download() / 1000000 # Mbps
+        up = st.upload() / 1000000 # Mbps
+        isp = st.results.client['isp']
+        
+        return {
+            "download": round(dn, 2),
+            "upload": round(up, 2),
+            "latency": round(ping, 1),
+            "operator": isp
+        }
+    except Exception as e:
+        print(f"Speedtest Error: {e}")
+        return {"error": "Speedtest failed. Using historical data instead."}
+
 @app.get("/bank-status")
 async def bank_status():
     """Returns ALL banks with their latest UPI status from the CSV log."""

@@ -7,7 +7,8 @@
   <meta name="color-scheme" content="light dark" />
   <meta name="theme-color" content="#2563eb" />
   <title>NetPaySense</title>
-  <link rel="stylesheet" href="style.css" />
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="style.css?v=3.6" />
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
     integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
@@ -163,7 +164,7 @@
                 <span class="settings-row-icon">📱</span>
                 <div>
                   <p class="settings-row-label">App Version</p>
-                  <p class="settings-row-sub">NetPaySense v2.0</p>
+                  <p class="settings-row-sub">NetPaySense v3.6</p>
                 </div>
               </div>
             </div>
@@ -464,10 +465,10 @@
             <div class="spinner"></div>
           </div>
           <div class="analyzing-steps">
-            <div class="a-step" id="a1"><span class="a-dot"></span> Fetching location data...</div>
-            <div class="a-step" id="a2"><span class="a-dot"></span> Fetching signal data...</div>
-            <div class="a-step" id="a3"><span class="a-dot"></span> Analyzing signal strength...</div>
-            <div class="a-step" id="a4"><span class="a-dot"></span> Predicting UPI success...</div>
+            <div class="a-step" id="a1"><span class="a-dot"></span> Fetching GPS location...</div>
+            <div class="a-step" id="a2"><span class="a-dot"></span> Probing Live Network (Pulse)...</div>
+            <div class="a-step" id="a3"><span class="a-dot"></span> Analyzing Signal Health...</div>
+            <div class="a-step" id="a4"><span class="a-dot"></span> Predicting UPI Success...</div>
           </div>
         </div>
       </div>
@@ -515,13 +516,19 @@
             <canvas id="results-risk-gauge" width="200" height="110"></canvas>
             <div class="risk-meter-label" id="results-risk-label">—</div>
           </div>
-          <div class="upi-row" style="margin-top:12px">
-            <div class="upi-icon-wrap" id="upi-icon-wrap"><span id="upi-icon">⚠️</span></div>
-            <div class="upi-text">
-              <p class="upi-label">UPI Success Chance</p>
-              <p class="upi-value" id="upi-value">—</p>
+          <div class="score-container">
+            <div id="upi-icon-wrap" class="upi-icon-wrap">
+              <span id="upi-icon">✅</span>
             </div>
-            <div class="upi-badge" id="upi-badge">—</div>
+            <div class="score-text">
+              <div style="font-size:0.7rem; opacity:0.6; margin-bottom:2px; font-weight:700; text-transform:uppercase; letter-spacing:0.05em; color:var(--primary)">UPI Success Rate</div>
+              <h2 id="upi-value" class="upi-value" style="margin-bottom:4px">Excellent - 95.4%</h2>
+              <div class="badge-row">
+                <div id="results-verified-box" class="verified-box hidden">
+                  <span id="results-operator-name">Jio</span> Verified
+                </div>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -532,6 +539,7 @@
 
         <div class="nav-btns">
           <button class="back-btn" onclick="goStep(1)">← Back</button>
+          <div id="debug-server-version" style="font-size:0.6rem; opacity:0.4; flex-grow:1; text-align:center;"></div>
           <button class="next-btn" id="results-feedback-btn" onclick="goStep(4)">Feedback →</button>
         </div>
       </div>
@@ -606,7 +614,7 @@
     </div>
 
   </div>
-  <script src="app.js"></script>
+  <script src="app.js?v=3.6"></script>
 </body>
 
 </html>
