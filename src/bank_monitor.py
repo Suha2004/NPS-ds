@@ -9,6 +9,13 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.support.ui import WebDriverWait
 from pathlib import Path
+from dotenv import load_dotenv
+from supabase import create_client, Client
+
+load_dotenv()
+_supabase_url = os.getenv("SUPABASE_URL", "")
+_supabase_key = os.getenv("SUPABASE_KEY", "")
+supabase: Client = create_client(_supabase_url, _supabase_key) if _supabase_url and _supabase_key and not _supabase_url.startswith("https://your") else None
 
 # ─────────────────────────────────────────────
 # CONFIG
@@ -96,29 +103,26 @@ def fetch_bank_health():
                     bank[service] = "?"
             data.append(bank)
 
-        # Save CSV
-        file_exists = CSV_FILE.exists()
-        with open(CSV_FILE, "a", newline="", encoding="utf-8") as f:
-            writer = csv.writer(f)
-            if not file_exists:
-                writer.writerow([
-                    "timestamp", "bank_name",
-                    "internet_banking", "rtgs", "neft",
-                    "imps", "upi", "mobile_banking"
-                ])
+        # Save to Supabase instead of CSV
+        if supabase:
+            records = []
             for bank in data:
-                writer.writerow([
-                    timestamp,
-                    bank["bank_name"],
-                    bank.get("Internet Banking"),
-                    bank.get("RTGS"),
-                    bank.get("NEFT"),
-                    bank.get("IMPS"),
-                    bank.get("UPI"),
-                    bank.get("Mobile Banking"),
-                ])
-
-        logging.info(f"Saved {len(data)} banks to CSV")
+                records.append({
+                    "timestamp": timestamp,
+                    "bank_name": bank["bank_name"],
+                    "internet_banking": bank.get("Internet Banking"),
+                    "rtgs": bank.get("RTGS"),
+                    "neft": bank.get("NEFT"),
+                    "imps": bank.get("IMPS"),
+                    "upi": bank.get("UPI"),
+                    "mobile_banking": bank.get("Mobile Banking"),
+                })
+            
+            # Insert in batches if needed, or all at once since it's small (~50-100 banks)
+            supabase.table("bank_health").insert(records).execute()
+            logging.info(f"Saved {len(data)} banks to Supabase")
+        else:
+            logging.error("Supabase client not initialized, skipping save.")
         return True
     except Exception as e:
         logging.error(f"Scraper Error: {e}")
@@ -133,24 +137,27 @@ def fetch_bank_health():
 def get_bank_upi_status(bank_name: str):
     """Retrieves the latest UPI status for a specific bank."""
     try:
-        if not CSV_FILE.exists():
-            return None, False
+        if not supabase: return None, False
 
-        df = pd.read_csv(CSV_FILE)
-        df['timestamp'] = pd.to_datetime(df['timestamp'], errors='coerce')
-        
-        # Filter for the specific bank (case-insensitive)
-        bank_df = df[df['bank_name'].str.contains(bank_name, case=False, na=False)]
-        
-        if bank_df.empty:
+        response = (
+            supabase.table("bank_health")
+            .select("upi, timestamp")
+            .ilike("bank_name", f"%{bank_name}%")
+            .order("timestamp", desc=True)
+            .limit(1)
+            .execute()
+        )
+        data = response.data
+        if not data:
             return None, False
-
-        # Get latest record
-        latest = bank_df.sort_values("timestamp", ascending=False).iloc[0]
+            
+        latest = data[0]
         status = str(latest.get("upi", "UP")).upper()
         
+        # Convert timestamp assuming ISO8601 string from Supabase
+        ts = pd.to_datetime(latest["timestamp"]).tz_localize(None)
         current_time = datetime.now()
-        stale = (current_time - latest["timestamp"]).total_seconds() / 60 > STALE_THRESHOLD_MINUTES
+        stale = (current_time - ts).total_seconds() / 60 > STALE_THRESHOLD_MINUTES
         
         return status, stale
     except Exception as e:
@@ -160,12 +167,22 @@ def get_bank_upi_status(bank_name: str):
 def get_problematic_banks():
     """Returns a list of all banks with UPI issues."""
     try:
-        if not CSV_FILE.exists():
-            return []
+        if not supabase: return []
 
-        df = pd.read_csv(CSV_FILE)
-        df['timestamp'] = pd.to_datetime(df['timestamp'], errors='coerce')
-        df = df.sort_values("timestamp", ascending=False)
+        # Get records from the last 2 hours (to find the latest for each bank)
+        cutoff = (datetime.now() - timedelta(hours=2)).isoformat()
+        response = (
+            supabase.table("bank_health")
+            .select("bank_name, upi, timestamp")
+            .gte("timestamp", cutoff)
+            .order("timestamp", desc=True)
+            .execute()
+        )
+        
+        if not response.data: return []
+        
+        df = pd.DataFrame(response.data)
+        df['timestamp'] = pd.to_datetime(df['timestamp']).dt.tz_localize(None)
         latest_df = df.drop_duplicates(subset=["bank_name"], keep="first")
 
         current_time = datetime.now()
@@ -194,19 +211,14 @@ def get_problematic_banks():
 # CLEANUP LOGIC
 # ─────────────────────────────────────────────
 def clean_old_data():
-    """Removes data older than 24 hours from the CSV."""
+    """Removes data older than 24 hours from Supabase."""
     try:
-        if not CSV_FILE.exists():
-            return
-
-        df = pd.read_csv(CSV_FILE)
-        df['timestamp'] = pd.to_datetime(df['timestamp'], errors='coerce')
-
-        cutoff = datetime.now() - timedelta(hours=DATA_RETENTION_HOURS)
-        df = df[df['timestamp'] >= cutoff]
-
-        df.to_csv(CSV_FILE, index=False)
-        logging.info("Cleanup successful: removed old data.")
+        if not supabase: return
+        cutoff = (datetime.now() - timedelta(hours=DATA_RETENTION_HOURS)).isoformat()
+        
+        # In Supabase, we can just delete where timestamp < cutoff
+        supabase.table("bank_health").delete().lt("timestamp", cutoff).execute()
+        logging.info("Cleanup successful: removed old data from Supabase.")
     except Exception as e:
         logging.error(f"Cleanup Error: {e}")
 
