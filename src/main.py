@@ -1,3 +1,6 @@
+from dotenv import load_dotenv
+load_dotenv()  # Must be first — loads SUPABASE_URL and SUPABASE_KEY from .env
+
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -8,6 +11,7 @@ import torch.nn as nn
 import joblib
 import os
 import json
+from supabase import create_client, Client
 import threading
 import speedtest
 from datetime import datetime, timedelta
@@ -21,7 +25,7 @@ from pathlib import Path
 from apscheduler.schedulers.background import BackgroundScheduler
 
 # Import bank monitoring logic from sibling module
-from .bank_monitor import fetch_bank_health, get_bank_upi_status, get_problematic_banks, clean_old_data, CSV_FILE
+from bank_monitor import fetch_bank_health, get_bank_upi_status, get_problematic_banks, clean_old_data, CSV_FILE
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 MODEL_PATH = BASE_DIR / "models"
@@ -42,9 +46,9 @@ app.add_middleware(
 @app.on_event("startup")
 async def startup_event():
     """Start the background scraper when the API starts."""
-    print(f"🔥 SERVER STARTING FROM: {os.path.abspath(__file__)}")
-    print(f"📂 FRONTEND ABSOLUTE PATH: {os.path.abspath(FRONTEND_DIR)}")
-    clean_old_data() # 🔥 Run cleanup on startup
+    print(f"SERVER STARTING FROM: {os.path.abspath(__file__)}")
+    print(f"FRONTEND ABSOLUTE PATH: {os.path.abspath(FRONTEND_DIR)}")
+    clean_old_data() # Run cleanup on startup
     
     # Start the background tasks
     scheduler = BackgroundScheduler(daemon=True)
@@ -343,14 +347,26 @@ async def pulse_test():
 
 @app.get("/bank-status")
 async def bank_status():
-    """Returns ALL banks with their latest UPI status from the CSV log."""
+    """Returns ALL banks with their latest UPI status from Supabase."""
     try:
-        if not CSV_FILE.exists():
+        if not supabase:
             return {"banks": [], "problematic_banks": [], "last_updated": None}
 
-        df = pd.read_csv(CSV_FILE)
-        df['timestamp'] = pd.to_datetime(df['timestamp'], errors='coerce')
-        df = df.sort_values("timestamp", ascending=False)
+        # Get records from the last 2 hours
+        cutoff = (datetime.now() - timedelta(hours=2)).isoformat()
+        response = (
+            supabase.table("bank_health")
+            .select("bank_name, upi, timestamp")
+            .gte("timestamp", cutoff)
+            .order("timestamp", desc=True)
+            .execute()
+        )
+        
+        if not response.data:
+            return {"banks": [], "problematic_banks": [], "last_updated": None}
+
+        df = pd.DataFrame(response.data)
+        df['timestamp'] = pd.to_datetime(df['timestamp']).dt.tz_localize(None)
         latest_df = df.drop_duplicates(subset=["bank_name"], keep="first")
 
         current_time = datetime.now()
@@ -395,43 +411,63 @@ async def bank_predict(req: BankPredictionRequest):
         "final_score": round(final_score, 1)
     }
 
-# ----------- COMMUNITY FEEDBACK & RL -----------
-FEEDBACK_FILE = "feedback_data.csv"
+# ----------- SUPABASE CLIENT -----------
+_supabase_url = os.getenv("SUPABASE_URL", "")
+_supabase_key = os.getenv("SUPABASE_KEY", "")
 
-def get_all_feedback():
-    if not os.path.exists(FEEDBACK_FILE): return pd.DataFrame()
+if _supabase_url and _supabase_key and not _supabase_url.startswith("https://your"):
+    supabase: Client = create_client(_supabase_url, _supabase_key)
+    print("Supabase connected.")
+else:
+    supabase = None
+    print("Supabase credentials not set - feedback will be disabled. Fill in .env file.")
+
+# ----------- COMMUNITY FEEDBACK & RL -----------
+
+def get_all_feedback() -> pd.DataFrame:
+    """Fetch recent feedback rows from Supabase."""
+    if supabase is None:
+        return pd.DataFrame()
     try:
-        df = pd.read_csv(FEEDBACK_FILE)
-        df['timestamp'] = pd.to_datetime(df['timestamp'], errors='coerce')
+        # Fetch rows from last 24 hours to keep query fast
+        threshold = (datetime.now() - timedelta(hours=24)).isoformat()
+        response = (
+            supabase.table("feedback")
+            .select("lat, lon, outcome, metrics, timestamp")
+            .gte("timestamp", threshold)
+            .execute()
+        )
+        rows = response.data
+        if not rows:
+            return pd.DataFrame()
+        df = pd.DataFrame(rows)
+        df['timestamp'] = pd.to_datetime(df['timestamp'], errors='coerce', utc=True)
+        df['timestamp'] = df['timestamp'].dt.tz_localize(None)  # strip tz for comparison
         return df.dropna(subset=['timestamp'])
-    except: return pd.DataFrame()
+    except Exception as e:
+        print(f"Supabase fetch error: {e}")
+        return pd.DataFrame()
 
 def check_nearby_failures(lat, lon, radius_km=2.0):
     try:
         df = get_all_feedback()
         if df.empty: return False
-        
+
         # 30-minute window
         threshold = datetime.now() - timedelta(minutes=30)
-        recent_failed = df[(df['outcome'] == 'failed')]
-        
-        # Filter by time separately to debug
-        recent_failed['timestamp'] = pd.to_datetime(recent_failed['timestamp'])
+        recent_failed = df[df['outcome'] == 'failed'].copy()
         recent_failed = recent_failed[recent_failed['timestamp'] >= threshold]
-        
-        print(f"🔍 DEBUG: Checking alerts near {lat}, {lon}")
-        print(f"🔍 DEBUG: Recent failures in last 30 mins: {len(recent_failed)}")
-        
-        for i, row in recent_failed.iterrows():
-            # Robust Euclidean distance approximation
+
+        print(f"DEBUG: Checking alerts near {lat}, {lon}")
+        print(f"DEBUG: Recent failures in last 30 mins: {len(recent_failed)}")
+
+        for _, row in recent_failed.iterrows():
             d_lat = float(row['lat']) - lat
             d_lon = (float(row['lon']) - lon) * np.cos(np.radians(lat))
             dist = (d_lat**2 + d_lon**2)**0.5 * 111.32
-            
             print(f"   -> Found failure at {row['lat']}, {row['lon']} (Dist: {dist:.3f} km)")
-            
-            if dist <= radius_km: 
-                print("🚨 ALERT TRIGGERED!")
+            if dist <= radius_km:
+                print("ALERT TRIGGERED!")
                 return True
         return False
     except Exception as e:
@@ -440,11 +476,22 @@ def check_nearby_failures(lat, lon, radius_km=2.0):
 
 @app.post("/feedback")
 async def submit_feedback(req: FeedbackRequest):
-    record = req.dict()
-    record["timestamp"] = datetime.now().isoformat()
-    file_exists = os.path.exists(FEEDBACK_FILE)
-    pd.DataFrame([record]).to_csv(FEEDBACK_FILE, mode='a', index=False, header=not file_exists)
-    return {"status": "recorded"}
+    """Store user feedback in Supabase."""
+    if supabase is None:
+        raise HTTPException(status_code=503, detail="Feedback storage not configured. Set SUPABASE_URL and SUPABASE_KEY in .env")
+    try:
+        record = {
+            "lat":      req.lat,
+            "lon":      req.lon,
+            "outcome":  req.outcome,
+            "metrics":  req.metrics,   # stored as JSONB
+            "timestamp": datetime.now().isoformat(),
+        }
+        supabase.table("feedback").insert(record).execute()
+        return {"status": "recorded"}
+    except Exception as e:
+        print(f"Supabase insert error: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to save feedback: {e}")
 
 # ----------- FRONTEND -----------
 app.mount("/", StaticFiles(directory=FRONTEND_DIR, html=True), name="static")

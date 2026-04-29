@@ -14,3 +14,6 @@ apscheduler
 selenium
 scipy
 pydantic
+supabase
+python-dotenv
+speedtest-cli
