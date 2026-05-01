@@ -19,8 +19,8 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-import torch
-import torch.nn as nn
+#import torch
+#import torch.nn as nn
 import joblib
 import os
 import json
@@ -75,31 +75,27 @@ def load_geo_data():
         karnataka = None
 
 # ----------- ML MODELS -----------
-class OoklaNN(nn.Module):
-    def __init__(self, input_size):
-        super(OoklaNN, self).__init__()
-        self.network = nn.Sequential(
-            nn.Linear(input_size, 64),
-            nn.ReLU(),
-            nn.Dropout(0.3),
-            nn.Linear(64, 32),
-            nn.ReLU(),
-            nn.Dropout(0.2),
-            nn.Linear(32, 16),
-            nn.ReLU(),
-            nn.Linear(16, 3)
-        )
-    def forward(self, x):
-        return self.network(x)
+#class OoklaNN(nn.Module):
+#    def __init__(self, input_size):
+#        super(OoklaNN, self).__init__()
+#        self.network = nn.Sequential(
+#            nn.Linear(input_size, 64),
+#            nn.ReLU(),
+#            nn.Dropout(0.3),
+#            nn.Linear(64, 32),
+#            nn.ReLU(),
+#            nn.Dropout(0.2),
+#            nn.Linear(32, 16),
+#            nn.ReLU(),
+#            nn.Linear(16, 3)
+#        )
+#    def forward(self, x):
+#        return self.network(x)
 
 def load_models():
-    global ookla_model, ookla_scaler, signal_model, look_up_df, tree, models_loaded
+    global ookla_scaler, signal_model, look_up_df, tree, models_loaded
     try:
         print("Loading models...")
-        m = OoklaNN(input_size=5)
-        m.load_state_dict(torch.load(MODEL_PATH / 'ookla_nn.pth', map_location='cpu'))
-        m.eval()
-        ookla_model = m
         ookla_scaler = joblib.load(MODEL_PATH / 'ookla_scaler.pkl')
         signal_model = joblib.load(MODEL_PATH / 'signal_xgb.pkl')
 
@@ -262,18 +258,6 @@ async def predict(req: PredictionRequest):
             lat = req.live_metrics.get('latency', lat)
             live_operator = req.live_metrics.get('operator')
             is_verified = True
-
-        m1_features = pd.DataFrame([[
-            dn, up, lat,
-            authentic_lat, authentic_lon
-        ]], columns=['download_mbps', 'upload_mbps', 'latency_ms', 'lat', 'lon'])
-        m1_scaled = ookla_scaler.transform(m1_features)
-
-        with torch.no_grad():
-            m1_out = ookla_model(torch.tensor(m1_scaled, dtype=torch.float32))
-            # Neural net still used for its trained feature understanding,
-            # but UPI score is now calculated from first principles below.
-            _ = torch.argmax(m1_out, dim=1).item()
 
         # --- Physics-Based UPI Success Rate ---
         # A UPI transaction is ~50KB of data. What causes failures:
