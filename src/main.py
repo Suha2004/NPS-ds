@@ -55,22 +55,16 @@ app.add_middleware(
 
 @app.on_event("startup")
 async def startup_event():
-    """Start the background scraper when the API starts."""
     print(f"SERVER STARTING FROM: {os.path.abspath(__file__)}")
     print(f"FRONTEND ABSOLUTE PATH: {os.path.abspath(FRONTEND_DIR)}")
-    clean_old_data() # Run cleanup on startup
     
-    # Start the background tasks
-    scheduler = BackgroundScheduler(daemon=True)
-    scheduler.add_job(fetch_bank_health, 'interval', minutes=5)
-    scheduler.add_job(clean_old_data, 'interval', hours=12) # 🔥 Cleanup every 12 hours
-    scheduler.start()
-    
-    # Run the first scrape immediately in a separate thread so it doesn't block API startup
-    threading.Thread(target=fetch_bank_health, daemon=True).start()
-    
-    print("Background Scraper Started (Interval: 5 min)")
+    clean_old_data()
 
+    scheduler = BackgroundScheduler(daemon=True)
+    scheduler.add_job(clean_old_data, 'interval', hours=12)
+    scheduler.start()
+
+    print("Bank scraper disabled in deployment")
 try:
     gdf = gpd.read_file(DATA_PATH / "IndiaStatesBoundaryShapes/India_State_Boundary.shp")
     gdf = gdf.to_crs(epsg=4326)
