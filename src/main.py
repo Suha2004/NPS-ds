@@ -374,29 +374,28 @@ async def predict(req: PredictionRequest):
 # ----------- BANK MONITORING API -----------
 @app.get("/pulse-test")
 async def pulse_test():
-    """Runs a real-time speed test (Ping, Download, Upload, Operator)."""
     try:
         if speedtest is None:
-    return {"error": "Speedtest module not available"}
+            return {"error": "Speedtest module not available"}
 
-st = speedtest.Speedtest()
+        st = speedtest.Speedtest()
         st.get_best_server()
-        
+
         ping = st.results.ping
-        # Perform download/upload tests
-        dn = st.download() / 1000000 # Mbps
-        up = st.upload() / 1000000 # Mbps
+        dn = st.download() / 1000000
+        up = st.upload() / 1000000
         isp = st.results.client['isp']
-        
+
         return {
             "download": round(dn, 2),
             "upload": round(up, 2),
             "latency": round(ping, 1),
             "operator": isp
         }
+
     except Exception as e:
         print(f"Speedtest Error: {e}")
-        return {"error": "Speedtest failed. Using historical data instead."}
+        return {"error": "Speedtest failed"}
 
 @app.get("/bank-status")
 async def bank_status():
