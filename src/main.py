@@ -80,6 +80,7 @@ async def startup_event():
     print("Bank scraper disabled in deployment")
 
     threading.Thread(target=load_geo_data, daemon=True).start()
+    threading.Thread(target=load_models, daemon=True).start()
 def isInKarnataka(lat: float, lon: float) -> bool:
     if karnataka is None:
         return True  # allow all if geo data failed
@@ -105,26 +106,26 @@ class OoklaNN(nn.Module):
 
 # Load Models
 ookla_model = OoklaNN(input_size=5)
-ookla_model.load_state_dict(torch.load(MODEL_PATH / 'ookla_nn.pth'))
-ookla_model.eval()
-ookla_scaler = joblib.load(MODEL_PATH / 'ookla_scaler.pkl')
+#ookla_model.load_state_dict(torch.load(MODEL_PATH / 'ookla_nn.pth'))
+#ookla_model.eval()
+#ookla_scaler = joblib.load(MODEL_PATH / 'ookla_scaler.pkl')
 
 # Load Model 2 (Local Signal)
-signal_model = joblib.load(MODEL_PATH / 'signal_xgb.pkl')
+#signal_model = joblib.load(MODEL_PATH / 'signal_xgb.pkl')
 
 # Load Look-up Data for Model 1 (Nearest Neighbor search)
-look_up_df = pd.read_csv(DATA_PATH / 'final_dataset.csv')
-look_up_df['download_mbps'] = look_up_df['avg_d_kbps'] / 1000
-look_up_df['upload_mbps'] = look_up_df['avg_u_kbps'] / 1000
-look_up_df['latency_ms'] = look_up_df['avg_lat_ms']
+#look_up_df = pd.read_csv(DATA_PATH / 'final_dataset.csv')
+#look_up_df['download_mbps'] = look_up_df['avg_d_kbps'] / 1000
+#look_up_df['upload_mbps'] = look_up_df['avg_u_kbps'] / 1000
+#look_up_df['latency_ms'] = look_up_df['avg_lat_ms']
 
-look_up_df = look_up_df[
-    (look_up_df['download_mbps'] > 0) &
-    (look_up_df['latency_ms'] > 0)
-]
+#look_up_df = look_up_df[
+   # (look_up_df['download_mbps'] > 0) &
+   # (look_up_df['latency_ms'] > 0)
+#]
 
-coords = look_up_df[['lat', 'lon']].values
-tree = KDTree(coords)
+#coords = look_up_df[['lat', 'lon']].values
+#tree = KDTree(coords)
 
 # ----------- SCHEMA -----------
 class PredictionRequest(BaseModel):
