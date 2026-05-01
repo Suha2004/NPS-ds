@@ -74,58 +74,6 @@ def load_geo_data():
         print("Geo load failed:", e)
         karnataka = None
 
-def load_models():
-    global ookla_model, ookla_scaler, signal_model, look_up_df, tree, models_loaded
-    try:
-        print("Loading models...")
-
-        ookla_model.load_state_dict(torch.load(MODEL_PATH / 'ookla_nn.pth'))
-        ookla_model.eval()
-
-        ookla_scaler = joblib.load(MODEL_PATH / 'ookla_scaler.pkl')
-        signal_model = joblib.load(MODEL_PATH / 'signal_xgb.pkl')
-
-        look_up_df = pd.read_csv(DATA_PATH / 'final_dataset.csv')
-        look_up_df['download_mbps'] = look_up_df['avg_d_kbps'] / 1000
-        look_up_df['upload_mbps'] = look_up_df['avg_u_kbps'] / 1000
-        look_up_df['latency_ms'] = look_up_df['avg_lat_ms']
-
-        look_up_df = look_up_df[
-            (look_up_df['download_mbps'] > 0) &
-            (look_up_df['latency_ms'] > 0)
-        ]
-
-        coords = look_up_df[['lat', 'lon']].values
-        tree = KDTree(coords)
-
-        models_loaded = True
-        print("Models loaded successfully")
-
-    except Exception as e:
-        print("Model load failed:", e)
-
-@app.on_event("startup")
-async def startup_event():
-    print(f"SERVER STARTING FROM: {os.path.abspath(__file__)}")
-    print(f"FRONTEND ABSOLUTE PATH: {os.path.abspath(FRONTEND_DIR)}")
-
-    clean_old_data()
-
-    scheduler = BackgroundScheduler(daemon=True)
-    scheduler.add_job(clean_old_data, 'interval', hours=12)
-    scheduler.start()
-
-    print("Bank scraper disabled in deployment")
-
-    threading.Thread(target=load_geo_data, daemon=True).start()
-    #threading.Thread(target=load_models, daemon=True).start()
-    models_loaded = True
-    
-def isInKarnataka(lat: float, lon: float) -> bool:
-    if karnataka is None:
-        return True  # allow all if geo data failed
-    point = Point(lon, lat)
-    return karnataka.geometry.contains(point).any()
 # ----------- ML MODELS -----------
 class OoklaNN(nn.Module):
     def __init__(self, input_size):
@@ -144,29 +92,48 @@ class OoklaNN(nn.Module):
     def forward(self, x):
         return self.network(x)
 
-# Load Models
-ookla_model = OoklaNN(input_size=5)
-#ookla_model.load_state_dict(torch.load(MODEL_PATH / 'ookla_nn.pth'))
-#ookla_model.eval()
-#ookla_scaler = joblib.load(MODEL_PATH / 'ookla_scaler.pkl')
+def load_models():
+    global ookla_model, ookla_scaler, signal_model, look_up_df, tree, models_loaded
+    try:
+        print("Loading models...")
+        m = OoklaNN(input_size=5)
+        m.load_state_dict(torch.load(MODEL_PATH / 'ookla_nn.pth', map_location='cpu'))
+        m.eval()
+        ookla_model = m
+        ookla_scaler = joblib.load(MODEL_PATH / 'ookla_scaler.pkl')
+        signal_model = joblib.load(MODEL_PATH / 'signal_xgb.pkl')
 
-# Load Model 2 (Local Signal)
-#signal_model = joblib.load(MODEL_PATH / 'signal_xgb.pkl')
+        df = pd.read_csv(DATA_PATH / 'final_dataset.csv')
+        df['download_mbps'] = df['avg_d_kbps'] / 1000
+        df['upload_mbps'] = df['avg_u_kbps'] / 1000
+        df['latency_ms'] = df['avg_lat_ms']
+        df = df[(df['download_mbps'] > 0) & (df['latency_ms'] > 0)]
+        look_up_df = df
+        tree = KDTree(df[['lat', 'lon']].values)
+        models_loaded = True
+        print("Models loaded successfully")
+    except Exception as e:
+        print("Model load failed:", e)
 
-# Load Look-up Data for Model 1 (Nearest Neighbor search)
-#look_up_df = pd.read_csv(DATA_PATH / 'final_dataset.csv')
-#look_up_df['download_mbps'] = look_up_df['avg_d_kbps'] / 1000
-#look_up_df['upload_mbps'] = look_up_df['avg_u_kbps'] / 1000
-#look_up_df['latency_ms'] = look_up_df['avg_lat_ms']
+@app.on_event("startup")
+async def startup_event():
+    print(f"SERVER STARTING FROM: {os.path.abspath(__file__)}")
+    print(f"FRONTEND ABSOLUTE PATH: {os.path.abspath(FRONTEND_DIR)}")
 
-#look_up_df = look_up_df[
-   # (look_up_df['download_mbps'] > 0) &
-   # (look_up_df['latency_ms'] > 0)
-#]
+    clean_old_data()
 
-#coords = look_up_df[['lat', 'lon']].values
-#tree = KDTree(coords)
+    scheduler = BackgroundScheduler(daemon=True)
+    scheduler.add_job(clean_old_data, 'interval', hours=12)
+    scheduler.start()
 
+    threading.Thread(target=load_geo_data, daemon=True).start()
+    threading.Thread(target=load_models, daemon=True).start()
+    
+def isInKarnataka(lat: float, lon: float) -> bool:
+    if karnataka is None:
+        return True  # allow all if geo data failed
+    point = Point(lon, lat)
+    return karnataka.geometry.contains(point).any()
 
 # ----------- SCHEMA -----------
 class PredictionRequest(BaseModel):
