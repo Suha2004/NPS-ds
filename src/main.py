@@ -9,20 +9,14 @@ from pydantic import BaseModel
 
 import os
 import threading
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Optional, Dict
 
 import pandas as pd
 import numpy as np
-from scipy.spatial import KDTree
 from pathlib import Path
 
-# Optional imports (safe)
-try:
-    from . import tower
-except:
-    import tower
-
+# Optional imports
 try:
     from .bank_monitor import fetch_bank_health, get_bank_upi_status, clean_old_data
 except:
@@ -54,7 +48,7 @@ async def startup_event():
     except Exception as e:
         print("Startup warning:", e)
 
-# -------- LIGHTWEIGHT KARNATAKA CHECK --------
+# -------- LIGHT KARNATAKA CHECK --------
 def isInKarnataka(lat: float, lon: float) -> bool:
     return 11.5 <= lat <= 18.5 and 74 <= lon <= 78.5
 
@@ -69,9 +63,6 @@ look_up_df = look_up_df[
     (look_up_df['download_mbps'] > 0) &
     (look_up_df['latency_ms'] > 0)
 ]
-
-coords = look_up_df[['lat', 'lon']].values
-tree = KDTree(coords)
 
 # -------- SCHEMA --------
 class PredictionRequest(BaseModel):
@@ -89,7 +80,7 @@ def get_ui_data(upi_score):
     else:
         return {"tier": "good", "badge": "Low Risk", "rec": "Safe to proceed"}
 
-# -------- PREDICT --------
+# -------- MAIN PREDICT --------
 @app.post("/predict")
 async def predict(req: PredictionRequest):
 
@@ -100,14 +91,16 @@ async def predict(req: PredictionRequest):
         })
 
     try:
-        dist, idx = tree.query([req.lat, req.lon])
-        nearest = look_up_df.iloc[idx]
+        # -------- SIMPLE NEAREST POINT (NO SCIPY) --------
+        nearest = look_up_df.iloc[
+            ((look_up_df['lat'] - req.lat)**2 + (look_up_df['lon'] - req.lon)**2).idxmin()
+        ]
 
         dn = nearest['download_mbps']
         up = nearest['upload_mbps']
         lat = nearest['latency_ms']
 
-        # Override with live data if present
+        # Override with live metrics
         if req.live_metrics:
             dn = req.live_metrics.get('download', dn)
             up = req.live_metrics.get('upload', up)
@@ -125,15 +118,18 @@ async def predict(req: PredictionRequest):
 
         ui = get_ui_data(upi_score)
 
-        # Bank override
+        # -------- BANK CHECK --------
         bank_warning = None
         if req.bank_name:
-            status, _ = get_bank_upi_status(req.bank_name)
-            if status == "DOWN":
-                ui["tier"] = "poor"
-                ui["badge"] = "CRITICAL"
-                ui["rec"] = "Bank server down"
-                bank_warning = f"{req.bank_name} DOWN"
+            try:
+                status, _ = get_bank_upi_status(req.bank_name)
+                if status == "DOWN":
+                    ui["tier"] = "poor"
+                    ui["badge"] = "CRITICAL"
+                    ui["rec"] = "Bank server down"
+                    bank_warning = f"{req.bank_name} DOWN"
+            except:
+                pass
 
         return {
             "lat": float(nearest['lat']),
@@ -144,7 +140,7 @@ async def predict(req: PredictionRequest):
             "recommendation": ui["rec"],
             "confidence": "80%",
             "bank_warning": bank_warning,
-            "server_version": "safe-mode"
+            "server_version": "final-safe"
         }
 
     except Exception as e:
