@@ -344,23 +344,25 @@ async def predict(req: PredictionRequest):
                 ui_data["rec"] = f"Warning: {req.bank_name} servers are unstable. Proceed with caution."
                 bank_warning = f"{req.bank_name} servers are fluctuating."
 
-        return {
+        response_data = {
             "lat": authentic_lat, "lon": authentic_lon, "tier": ui_data["tier"],
-            "better_location": {"lat": better_lat, "lon": better_lon}, # return betterlocation for map pin in frontend
+            "better_location": {"lat": better_lat, "lon": better_lon},
             "bars": ui_data["bars"], "dbm": ui_data["dbm"], "label": ui_data["label"],
             "upi": ui_data["upi"], "badge": ui_data["badge"], "type": ui_data["type"],
             "recommendation": ui_data["rec"], "confidence": f"{(final_quality + 1) * 30}%", 
-            "best_network": live_operator or best_operator, "bank_warning": bank_warning,
+            "best_network": best_operator,  # 🎯 Recommendation always based on Nearest Tower
+            "bank_warning": bank_warning,
             "server_version": "v4.1",
             "metrics": { 
                 "download": f"{dn:.2f} Mbps", 
                 "upload": f"{up:.2f} Mbps",
                 "latency": f"{lat:.1f} ms",
                 "is_verified": is_verified,
-                "operator": live_operator or best_operator
+                "operator": live_operator or best_operator  # 🟢 Badge shows current SIM (fallback to tower)
             },
             "community_alert": has_alert
         }
+        return response_data
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -376,7 +378,7 @@ async def pulse_test():
         # Perform download/upload tests
         dn = st.download() / 1000000 # Mbps
         up = st.upload() / 1000000 # Mbps
-        isp = st.results.client['isp']
+        isp = st.results.client.get('isp', 'Unknown')
         
         return {
             "download": round(dn, 2),
