@@ -22,9 +22,8 @@ COPY . .
 # Set the PYTHONPATH so it can find the 'src' folder
 ENV PYTHONPATH="/app/src"
 
-# Expose the port FastAPI will run on
-EXPOSE 8080
+# Expose the port Hugging Face expects (7860)
+EXPOSE 7860
 
 # Command to run the application
-# Cloud Run expects the app to listen on $PORT
-CMD ["sh", "-c", "uvicorn src.main:app --host 0.0.0.0 --port ${PORT:-8080}"]
+CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "7860"]
