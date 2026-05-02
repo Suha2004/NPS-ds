@@ -12,8 +12,21 @@ jobs:
         with:
           fetch-depth: 0
           lfs: true
+      - name: Install Hugging Face Hub
+        run: pip install huggingface_hub
+
       - name: Push to hub
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
-          git push --force https://zaid1045:$HF_TOKEN@huggingface.co/spaces/zaid1045/NetPaySense-API main
+          python -c "
+          from huggingface_hub import HfApi
+          import os
+          api = HfApi()
+          api.upload_folder(
+              folder_path='.',
+              repo_id='zaid1045/NetPaySense-API',
+              repo_type='space',
+              token=os.environ['HF_TOKEN'],
+              ignore_patterns=['.git/*', '.github/*', '.venv/*', 'venv/*', 'node_modules/*', '__pycache__/*']
+          )"
