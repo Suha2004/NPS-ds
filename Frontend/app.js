@@ -1236,6 +1236,56 @@ function hash(str) {
   return h;
 }
 
+// ── CLIENT-SIDE SPEED TEST (PRO) ──
+async function performClientSpeedTest() {
+  const metrics = {
+    download: 0,
+    upload: 0,
+    latency: 0,
+    operator: 'Unknown'
+  };
+
+  try {
+    // 1. Get Operator via IP-API
+    try {
+      const ipRes = await fetch('https://ipapi.co/json/');
+      const ipData = await ipRes.json();
+      metrics.operator = ipData.org || ipData.isp || 'Unknown';
+    } catch (e) { console.warn("Operator check failed", e); }
+
+    // 2. Measure Latency (Ping)
+    const startPing = Date.now();
+    await fetch('/test-download', { method: 'HEAD' });
+    metrics.latency = Date.now() - startPing;
+
+    // 3. Measure Download Speed
+    const startDown = Date.now();
+    const downRes = await fetch('/test-download');
+    const blob = await downRes.blob();
+    const endDown = Date.now();
+    const durationDown = (endDown - startDown) / 1000; // seconds
+    const sizeDownBits = blob.size * 8;
+    metrics.download = parseFloat(((sizeDownBits / durationDown) / 1000000).toFixed(2));
+
+    // 4. Measure Upload Speed
+    const uploadData = new Uint8Array(256 * 1024); // 256KB
+    const startUp = Date.now();
+    await fetch('/test-upload', {
+      method: 'POST',
+      body: uploadData
+    });
+    const endUp = Date.now();
+    const durationUp = (endUp - startUp) / 1000;
+    const sizeUpBits = uploadData.length * 8;
+    metrics.upload = parseFloat(((sizeUpBits / durationUp) / 1000000).toFixed(2));
+
+    return metrics;
+  } catch (err) {
+    console.error("Client Speed Test Error:", err);
+    return null;
+  }
+}
+
 // ── Location & Check ──
 function goToLocationChecker() {
   isLiveSession = false; // Reset session type when manually checking new location
@@ -1287,14 +1337,13 @@ function getMyLocation() {
         name = await translateIfNeeded(name, currentLang);
       } catch { }
 
-      // 🛰️ Run Pulse Test
+      // 🛰️ Run Pro Client-Side Speed Test
       let liveMetrics = null;
       btn.textContent = T('analyzing_title');
       try {
-        const pulseRes = await fetch('/pulse-test');
-        liveMetrics = await pulseRes.json();
-        if (liveMetrics.error) liveMetrics = null;
-      } catch (e) { console.warn("Pulse test failed", e); }
+        liveMetrics = await performClientSpeedTest();
+        console.log("Real Metrics on Device:", liveMetrics);
+      } catch (e) { console.warn("Pro test failed", e); }
 
       useLiveLocation(lat, lng, name, liveMetrics);
     },

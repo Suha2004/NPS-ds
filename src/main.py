@@ -374,7 +374,7 @@ async def predict(req: PredictionRequest):
 # ----------- BANK MONITORING API -----------
 @app.get("/pulse-test")
 async def pulse_test():
-    """Runs a real-time speed test (Ping, Download, Upload, Operator)."""
+    """Runs a real-time speed test on the SERVER (Hugging Face)."""
     def run_speedtest():
         st = speedtest.Speedtest()
         st.get_best_server()
@@ -388,14 +388,24 @@ async def pulse_test():
             "latency": round(ping, 1),
             "operator": isp
         }
+    try: return await asyncio.to_thread(run_speedtest)
+    except: return {"error": "Speedtest failed."}
 
-    try:
-        # Run the blocking speedtest in a separate thread to keep API responsive
-        result = await asyncio.to_thread(run_speedtest)
-        return result
-    except Exception as e:
-        print(f"Speedtest Error: {e}")
-        return {"error": "Speedtest failed. Check your connection."}
+# ----------- CLIENT SPEED TEST ENDPOINTS -----------
+
+@app.get("/test-download")
+async def test_download():
+    """Endpoint for the client to measure download speed."""
+    from fastapi.responses import Response
+    # 500KB of random data
+    data = os.urandom(512 * 1024)
+    return Response(content=data, media_type="application/octet-stream")
+
+@app.post("/test-upload")
+async def test_upload(request: Request):
+    """Endpoint for the client to measure upload speed."""
+    body = await request.body()
+    return {"size_received": len(body), "status": "ok"}
 
 @app.get("/bank-status")
 async def bank_status():
