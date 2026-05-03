@@ -158,29 +158,38 @@ class SpeedtestService:
             # 1. Get ALL servers
             all_servers = st.get_servers()
             
-            # 2. Filter specifically for servers in INDIA
-            india_servers = []
+            # 2. Filter specifically for servers in KARNATAKA
+            karnataka_servers = []
             for s_list in all_servers.values():
                 for s in s_list:
-                    if s.get('country') == 'India':
+                    # Use our existing boundary check to find servers in the state
+                    if isInKarnataka(s['lat'], s['lon']):
                         # Calculate distance to user's coords
                         d_lat = s['lat'] - lat
                         d_lon = (s['lon'] - lon) * math.cos(math.radians(lat))
                         s['dist'] = (d_lat**2 + d_lon**2)**0.5 * 111.32
-                        india_servers.append(s)
+                        karnataka_servers.append(s)
             
-            if not india_servers:
+            if not karnataka_servers:
+                # Fallback: if no Karnataka servers, use any India server as secondary baseline
+                print("DEBUG: No Karnataka servers found, falling back to India-wide.")
+                for s_list in all_servers.values():
+                    for s in s_list:
+                        if s.get('country') == 'India':
+                            karnataka_servers.append(s)
+            
+            if not karnataka_servers:
                 return 0
             
-            # 3. Pick top 5 closest to user IN India
-            india_servers.sort(key=lambda x: x['dist'])
-            top_5 = india_servers[:5]
+            # 3. Pick top 5 closest to user IN target area
+            karnataka_servers.sort(key=lambda x: x.get('dist', 9999))
+            top_5 = karnataka_servers[:5]
             
-            # 4. Measure RTT from HF (US) -> India Target
+            # 4. Measure RTT from HF (US) -> Target
             best = st.get_best_server(top_5)
             transit_latency = best.get('latency', 0)
             
-            print(f"TRIANGULATION TARGET: {best['name']}, {best['country']} (Dist to user: {best['dist']:.1f}km) | Transit: {transit_latency}ms")
+            print(f"TRIANGULATION TARGET: {best['name']}, {best['country']} (In Karnataka: {isInKarnataka(best['lat'], best['lon'])}) | Transit: {transit_latency}ms")
 
             with self.lock:
                 self.cache[key] = transit_latency
