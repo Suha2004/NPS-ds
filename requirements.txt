@@ -18,3 +18,5 @@ APScheduler
 scipy
 selenium
 webdriver-manager
+pyshp
+

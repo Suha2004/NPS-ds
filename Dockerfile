@@ -19,6 +19,7 @@ RUN apt-get update && apt-get install -y \
 # Set environment variables for Selenium
 ENV CHROME_BIN=/usr/bin/chromium
 ENV CHROMEDRIVER_PATH=/usr/bin/chromedriver
+ENV PYTHONPATH=/app/src
 
 # Copy requirements and install
 COPY requirements.txt .
@@ -27,11 +28,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy the rest of the application
 COPY . .
 
-# Set the PYTHONPATH
-ENV PYTHONPATH="/app/src"
-
 # Expose the port Hugging Face expects (7860)
 EXPOSE 7860
 
 # Command to run the application
 CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "7860"]
+

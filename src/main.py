@@ -68,6 +68,7 @@ async def startup_event():
     # Run the first scrape immediately in a separate thread so it doesn't block API startup
     threading.Thread(target=fetch_bank_health, daemon=True).start()
 
+# Load Karnataka Boundary
 gdf = gpd.read_file(DATA_PATH / "IndiaStatesBoundaryShapes/India_State_Boundary.shp")
 gdf = gdf.to_crs(epsg=4326) # converts to lat/lon
 karnataka = gdf[gdf["STATE"] == "KARNATAKA"]
@@ -96,7 +97,7 @@ class OoklaNN(nn.Module):
 
 # Load Models
 ookla_model = OoklaNN(input_size=5)
-ookla_model.load_state_dict(torch.load(MODEL_PATH / 'ookla_nn.pth'))
+ookla_model.load_state_dict(torch.load(MODEL_PATH / 'ookla_nn.pth', weights_only=True))
 ookla_model.eval()
 ookla_scaler = joblib.load(MODEL_PATH / 'ookla_scaler.pkl')
 
@@ -187,18 +188,10 @@ class SpeedtestService:
             print(f"Transit measurement failed: {e}")
             return 0
 
-            with self.lock:
-                self.cache[key] = transit_latency
-            return transit_latency
-        except Exception as e:
-            print(f"Speedtest triangulation failed: {e}")
-            return 0
-
 speed_service = SpeedtestService()
 
 # ----------- UI LOGIC -----------
 def get_ui_data(quality_score, upi_score, community_alert=False, is_triangulated=False):
-    # Force consistency: The Score is the master
     if community_alert or upi_score < 45:
         tier = "poor"
         badge = "High Risk" if not community_alert else "COMMUNITY DOWNTIME"
@@ -332,10 +325,6 @@ async def predict(req: PredictionRequest):
             _ = torch.argmax(m1_out, dim=1).item()
 
         # --- Physics-Based UPI Success Rate ---
-        # A UPI transaction is ~50KB of data. What causes failures:
-        #   1. HIGH LATENCY  → round-trip exceeds UPI's timeout window (~30s)
-        #   2. LOW UPLOAD    → payment request never fully reaches the bank server
-        #   3. LOW DOWNLOAD  → minor, only affects receiving the small confirmation
         BASE_RATE = 95.0
 
         # LATENCY PENALTY — most critical factor
@@ -413,6 +402,10 @@ async def predict(req: PredictionRequest):
         ui_data = get_ui_data(final_quality, upi_score, has_alert, is_triangulated)
         best_operator = nearest_tower_data.get("operator", "Unknown") if nearest_tower_data else "Unknown"
 
+        # 🔥 Fallback: If no tower found, default to most likely operators for Karnataka
+        if not best_operator or best_operator == "Unknown":
+            best_operator = "Jio / Airtel"
+
         # 3. Bank Status Override
         bank_warning = None
         if req.bank_name and status:
@@ -444,7 +437,7 @@ async def predict(req: PredictionRequest):
                 "latency": f"{lat:.1f} ms",
                 "is_verified": is_verified,
                 "operator": live_operator or best_operator,  # 🟢 Badge shows current SIM (fallback to tower)
-                "tower_count": nearest_tower_data.get("total_towers_found", 0),
+                "tower_count": nearest_tower_data.get("total_towers_found", 0) if nearest_tower_data else 0,
                 "is_triangulated": is_triangulated
             },
             "community_alert": has_alert
@@ -604,6 +597,7 @@ def get_all_feedback() -> pd.DataFrame:
         print(f"Supabase fetch error: {e}")
         return pd.DataFrame()
 
+
 def check_nearby_failures(lat, lon, radius_km=2.0):
     try:
         df = get_all_feedback()
@@ -662,4 +656,7 @@ app.mount("/", StaticFiles(directory=FRONTEND_DIR, html=True), name="static")
 # ----------- RUN -----------
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    # Use HF port if available, otherwise 7860
+    port = int(os.environ.get("PORT", 7860))
+    uvicorn.run(app, host="0.0.0.0", port=port)
+

@@ -16,6 +16,7 @@ def haversine_distance(lat1, lon1, lat2, lon2):
 def create_bounding_box(lat, lon, radius_km):
     delta_lat = radius_km / 111
     delta_lon = radius_km / (111 * math.cos(math.radians(lat)))
+    # OpenCellID expects: lat_min, lon_min, lat_max, lon_max
     return f"{lat - delta_lat},{lon - delta_lon},{lat + delta_lat},{lon + delta_lon}"
 
 def fetch_towers(lat, lon, radius_km, api_key):
@@ -60,10 +61,12 @@ def find_nearest_tower(lat, lon, api_key):
         tower["distance_m"] = round(
             haversine_distance(lat, lon, tower["lat"], tower["lon"]), 2
         )
-
-        tower["operator"] = MNC_LOOKUP.get((tower["mcc"], tower["mnc"]), "Unknown")
+        # Ensure MCC/MNC are integers for the lookup
+        mcc = int(tower.get("mcc", 0))
+        mnc = int(tower.get("mnc", 0))
+        tower["operator"] = MNC_LOOKUP.get((mcc, mnc), "Unknown")
 
     nearest = min(towers, key=lambda t: t["distance_m"])
     nearest["search_radius_km"] = used_radius
     nearest["total_towers_found"] = len(towers)
-    return nearest
+    return nearest

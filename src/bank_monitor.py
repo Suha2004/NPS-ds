@@ -4,10 +4,19 @@ import os
 import logging
 from datetime import datetime, timedelta
 import pandas as pd
-from selenium import webdriver
-from selenium.webdriver.common.by import By
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.support.ui import WebDriverWait
+try:
+    from selenium import webdriver
+    from selenium.webdriver.common.by import By
+    from selenium.webdriver.chrome.options import Options
+    from selenium.webdriver.support.ui import WebDriverWait
+    from selenium.webdriver.chrome.service import Service
+except ImportError:
+    webdriver = None
+    By = None
+    Options = None
+    WebDriverWait = None
+    Service = None
+
 from pathlib import Path
 from dotenv import load_dotenv
 from supabase import create_client, Client
@@ -47,7 +56,11 @@ logging.basicConfig(
 # SCRAPER LOGIC
 # ─────────────────────────────────────────────
 def fetch_bank_health():
-    """Scrapes bank health data and saves it to CSV."""
+    """Scrapes bank health data and saves it to Supabase."""
+    if webdriver is None:
+        logging.error("Selenium dependencies not found. Ensure selenium is installed.")
+        return False
+
     print(">>> [DEBUG] fetch_bank_health() triggered!")
     timestamp = datetime.now().isoformat()
     logging.info("Starting scrape...")
@@ -73,11 +86,15 @@ def fetch_bank_health():
         
         print(">>> [DEBUG] Calling webdriver.Chrome()...")
         if chrome_driver:
-            from selenium.webdriver.chrome.service import Service
             service = Service(executable_path=chrome_driver)
             driver = webdriver.Chrome(service=service, options=options)
         else:
-            driver = webdriver.Chrome(options=options)
+            try:
+                from webdriver_manager.chrome import ChromeDriverManager
+                service = Service(ChromeDriverManager().install())
+                driver = webdriver.Chrome(service=service, options=options)
+            except:
+                driver = webdriver.Chrome(options=options)
             
         print(">>> [DEBUG] webdriver.Chrome() succeeded! Calling driver.get(URL)...")
         driver.set_page_load_timeout(30) # Prevent indefinite hanging
@@ -89,7 +106,7 @@ def fetch_bank_health():
 
         # Scroll to load more rows
         last_height = driver.execute_script("return document.body.scrollHeight")
-        for _ in range(5): # Reduced from 10 for performance
+        for _ in range(5):
             driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
             time.sleep(2)
             new_height = driver.execute_script("return document.body.scrollHeight")
@@ -128,7 +145,7 @@ def fetch_bank_health():
                     bank[service] = "?"
             data.append(bank)
 
-        # Save to Supabase instead of CSV
+        # Save to Supabase
         if supabase:
             records = []
             for bank in data:
@@ -143,7 +160,6 @@ def fetch_bank_health():
                     "mobile_banking": bank.get("Mobile Banking"),
                 })
             
-            # Insert in batches if needed, or all at once since it's small (~50-100 banks)
             supabase.table("bank_health").insert(records).execute()
             print(f">>> [DEBUG] Saved {len(data)} banks to Supabase successfully!")
             logging.info(f"Saved {len(data)} banks to Supabase")
@@ -157,7 +173,6 @@ def fetch_bank_health():
         print(err_msg)
         logging.error(err_msg)
         
-        # Take a screenshot to debug what the browser actually sees (e.g., Cloudflare block)
         if 'driver' in locals():
             try:
                 screenshot_path = DATA_PATH / "error_screenshot.png"
@@ -194,7 +209,6 @@ def get_bank_upi_status(bank_name: str):
         latest = data[0]
         status = str(latest.get("upi", "UP")).upper()
         
-        # Convert timestamp assuming ISO8601 string from Supabase
         ts = pd.to_datetime(latest["timestamp"]).tz_localize(None)
         current_time = datetime.now()
         stale = (current_time - ts).total_seconds() / 60 > STALE_THRESHOLD_MINUTES
@@ -209,7 +223,6 @@ def get_problematic_banks():
     try:
         if not supabase: return []
 
-        # Get records from the last 2 hours (to find the latest for each bank)
         cutoff = (datetime.now() - timedelta(hours=2)).isoformat()
         response = (
             supabase.table("bank_health")
@@ -255,18 +268,16 @@ def clean_old_data():
     try:
         if not supabase: return
         cutoff = (datetime.now() - timedelta(hours=DATA_RETENTION_HOURS)).isoformat()
-        
-        # In Supabase, we can just delete where timestamp < cutoff
         supabase.table("bank_health").delete().lt("timestamp", cutoff).execute()
         logging.info("Cleanup successful: removed old data from Supabase.")
     except Exception as e:
         logging.error(f"Cleanup Error: {e}")
 
 if __name__ == "__main__":
-    # Ensure data directory exists
     DATA_PATH.mkdir(exist_ok=True)
     print("Starting manual scrape...")
     if fetch_bank_health():
         print("Scrape successful!")
     else:
         print("Scrape failed. Check logs.")
+

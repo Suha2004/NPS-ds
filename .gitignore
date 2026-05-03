@@ -216,6 +216,7 @@ __pycache__/
 node_modules/
 data/*.csv
 .venv_final/
+<<<<<<< HEAD
 pip_check_temp/
 *.shp
 *.shx
@@ -228,3 +229,5 @@ pip_check_temp/
 *.png
 *.jpg
 *.jpeg
+=======
+>>>>>>> fixed-ui

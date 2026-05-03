@@ -26,20 +26,17 @@
           <div class="ob-slide active" id="ob-0">
             <div class="ob-illustration">📡</div>
             <h2 class="ob-title" data-i18n="ob0_title">Welcome to NetPaySense</h2>
-            <p class="ob-desc" data-i18n="ob0_desc">Check network reliability and UPI payment success chances for any location — before you
-              pay.</p>
+            <p class="ob-desc" data-i18n="ob0_desc">Check network reliability and UPI payment success chances for any location — before you pay.</p>
           </div>
           <div class="ob-slide" id="ob-1">
             <div class="ob-illustration">🗺️</div>
             <h2 class="ob-title" data-i18n="ob1_title">Smart Location Check</h2>
-            <p class="ob-desc" data-i18n="ob1_desc">Enter any location or use GPS to instantly get signal strength, UPI risk level, and bank
-              server status.</p>
+            <p class="ob-desc" data-i18n="ob1_desc">Enter any location or use GPS to instantly get signal strength, UPI risk level, and bank server status.</p>
           </div>
           <div class="ob-slide" id="ob-2">
             <div class="ob-illustration">🔒</div>
             <h2 class="ob-title" data-i18n="ob2_title">100% Private</h2>
-            <p class="ob-desc" data-i18n="ob2_desc">No data is sent to any server. Everything runs locally on your device. Your location
-              stays yours.</p>
+            <p class="ob-desc" data-i18n="ob2_desc">No data is sent to any server. Everything runs locally on your device. Your location stays yours.</p>
           </div>
         </div>
         <div class="ob-dots">
@@ -51,6 +48,7 @@
         <button class="ob-skip-btn" onclick="obSkip()" data-i18n="ob_skip">Don't show again</button>
       </div>
     </div>
+
 
     <!-- Settings Panel (full slide-in) -->
     <div class="settings-overlay hidden" id="settings-panel" onclick="closeSettingsOverlay(event)">
@@ -127,20 +125,21 @@
                 <span class="toggle-slider"></span>
               </label>
             </div>
-            <div class="settings-row">
-              <div class="settings-row-left">
-                <span class="settings-row-icon">📳</span>
-                <div>
-                  <p class="settings-row-label" data-i18n="vibration">Vibration</p>
-                  <p class="settings-row-sub" data-i18n="vibration_sub">Haptic feedback on actions</p>
-                </div>
+          <div class="settings-row">
+            <div class="settings-row-left">
+              <span class="settings-row-icon">📳</span>
+              <div>
+                <p class="settings-row-label" data-i18n="vibration">Vibration</p>
+                <p class="settings-row-sub" data-i18n="vibration_sub">Haptic feedback on actions</p>
               </div>
-              <label class="toggle-switch">
-                <input type="checkbox" id="vibration-toggle" checked />
-                <span class="toggle-slider"></span>
-              </label>
             </div>
+            <label class="toggle-switch">
+              <input type="checkbox" id="vibration-toggle" checked />
+              <span class="toggle-slider"></span>
+            </label>
           </div>
+        </div>
+
 
           <!-- Data & Privacy -->
           <p class="settings-section-label" data-i18n="section_privacy">Data & Privacy</p>
@@ -185,7 +184,7 @@
                 <span class="settings-row-icon">📱</span>
                 <div>
                   <p class="settings-row-label" data-i18n="app_version">App Version</p>
-                  <p class="settings-row-sub">NetPaySense v4.2</p>
+                  <p class="settings-row-sub">NetPaySense v5.2.1</p>
                 </div>
               </div>
             </div>
@@ -332,6 +331,7 @@
         <!-- Result Cards (Hidden by default) -->
         <div class="card hidden" id="dash-loc-card">
           <div class="card-label"><span class="label-dot blue"></span> <span data-i18n="current_location">Current Location</span></div>
+
           <p class="loc-name" id="dash-loc-name" data-i18n="fetching">Fetching location...</p>
           <div class="coord-row">
             <span class="coord-chip">🌐 <span id="dash-coords">—</span></span>
@@ -454,6 +454,7 @@
       </div>
     </div>
 
+
     <main class="main hidden" id="app-main">
 
       <!-- ── STEP 1: Welcome + Search ── -->
@@ -518,6 +519,7 @@
           </div>
         </div>
 
+
         <div class="card">
           <div class="card-title-row" style="margin-bottom:12px">
             <span class="card-title-icon">🏦</span>
@@ -546,11 +548,21 @@
               <span id="upi-icon">✅</span>
             </div>
             <div class="score-text">
+<<<<<<< HEAD
               <div style="font-size:0.7rem; opacity:0.6; margin-bottom:2px; font-weight:700; text-transform:uppercase; letter-spacing:0.05em; color:var(--primary)" data-i18n="upi_success_chance">UPI Success Rate</div>
               <h2 id="upi-value" class="upi-value" style="margin-bottom:4px">—</h2>
               <div class="badge-row">
                 <div id="results-verified-box" class="verified-box hidden">
                   <span id="results-operator-name"></span> <span id="results-verification-status"></span>
+=======
+              <div
+                style="font-size:0.7rem; opacity:0.6; margin-bottom:2px; font-weight:700; text-transform:uppercase; letter-spacing:0.05em; color:var(--primary)"
+                data-i18n="upi_success_chance">UPI Success Rate</div>
+              <h2 id="upi-value" class="upi-value" style="margin-bottom:4px">—</h2>
+              <div class="badge-row">
+                <div id="results-verified-box" class="verified-box hidden">
+                  <span id="results-operator-name">Jio</span> Verified
+>>>>>>> fixed-ui
                 </div>
               </div>
             </div>
@@ -565,7 +577,12 @@
         <div class="nav-btns">
           <button class="back-btn" onclick="resetApp()" data-i18n="back_btn">← Back</button>
           <div id="debug-server-version" style="font-size:0.6rem; opacity:0.4; flex-grow:1; text-align:center;"></div>
+<<<<<<< HEAD
           <button class="next-btn" id="results-feedback-btn" onclick="goStep(4)" data-i18n="feedback_btn">Feedback →</button>
+=======
+          <button class="next-btn" id="results-feedback-btn" onclick="goStep(4)" data-i18n="feedback_btn">Feedback
+            →</button>
+>>>>>>> fixed-ui
         </div>
       </div>
 
@@ -608,14 +625,24 @@
               <span class="fb-star" onclick="selectStar(4)">★</span>
               <span class="fb-star" onclick="selectStar(5)">★</span>
             </div>
+<<<<<<< HEAD
             <button class="next-btn" onclick="submitFeedbackNew()" style="margin-top:18px" data-i18n="submit_feedback">Submit Feedback</button>
+=======
+            <button class="next-btn" onclick="submitFeedbackNew()" style="margin-top:18px"
+              data-i18n="submit_feedback">Submit Feedback</button>
+>>>>>>> fixed-ui
           </div>
         </div>
         <div class="card feedback-card hidden" id="feedback-thanks-card">
           <div class="fb-thanks-icon" id="fb-thanks-icon">🎉</div>
           <p class="feedback-q" id="fb-thanks-title" data-i18n="thanks_title">Thank you!</p>
           <p class="fb-thanks-tip" id="fb-thanks-tip">—</p>
+<<<<<<< HEAD
           <button class="next-btn reset-btn" onclick="resetApp()" style="margin-top:18px" data-i18n="check_another">🔄 Check Another
+=======
+          <button class="next-btn reset-btn" onclick="resetApp()" style="margin-top:18px" data-i18n="check_another">🔄
+            Check Another
+>>>>>>> fixed-ui
             Location</button>
         </div>
         <div class="nav-btns" id="back-from-5">
@@ -639,7 +666,11 @@
     </div>
 
   </div>
+<<<<<<< HEAD
   <script src="app.js?v=4.4"></script>
+=======
+  <script src="app.js?v=4.3"></script>
+>>>>>>> fixed-ui
 </body>
 
 </html>
