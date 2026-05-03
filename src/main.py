@@ -356,7 +356,7 @@ async def predict(req: PredictionRequest):
             "recommendation": ui_data["rec"], "confidence": f"{(final_quality + 1) * 30}%", 
             "best_network": best_operator if best_operator != "Unknown" else (live_operator or "Airtel / Jio"),
             "bank_warning": bank_warning,
-            "server_version": "v4.3",
+            "server_version": "v4.4",
             "metrics": { 
                 "download": f"{dn:.2f} Mbps", 
                 "upload": f"{up:.2f} Mbps",
@@ -367,6 +367,7 @@ async def predict(req: PredictionRequest):
             },
             "community_alert": has_alert
         }
+        print(f"DEBUG: {authentic_lat}, {authentic_lon} | Op: {live_operator or best_operator} | Metrics: {response_data['metrics']} | UPI: {upi_score:.1f}%")
         return response_data
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -393,12 +394,12 @@ async def pulse_test():
 
 # ----------- CLIENT SPEED TEST ENDPOINTS -----------
 
-@app.get("/test-download")
+@app.api_route("/test-download", methods=["GET", "HEAD"])
 async def test_download():
     """Endpoint for the client to measure download speed."""
     from fastapi.responses import Response
-    # 500KB of random data
-    data = os.urandom(512 * 1024)
+    # 4MB of random data (increased for better high-speed accuracy)
+    data = os.urandom(4 * 1024 * 1024)
     return Response(content=data, media_type="application/octet-stream")
 
 @app.post("/test-upload")

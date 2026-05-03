@@ -1246,38 +1246,53 @@ async function performClientSpeedTest() {
   };
 
   try {
-    // 1. Get Operator via IP-API
+    // 1. Get Operator via IP-API (Optional, fallback to Tower)
     try {
       const ipRes = await fetch('https://ipapi.co/json/');
       const ipData = await ipRes.json();
       metrics.operator = ipData.org || ipData.isp || 'Unknown';
     } catch (e) { console.warn("Operator check failed", e); }
 
-    // 2. Measure Latency (Ping)
-    const startPing = Date.now();
+    // 2. Measure Latency (Pro: use performance.now and warm-up)
+    // Warm-up to establish TCP/SSL
     await fetch('/test-download', { method: 'HEAD' });
-    metrics.latency = Date.now() - startPing;
 
-    // 3. Measure Download Speed
-    const startDown = Date.now();
-    const downRes = await fetch('/test-download');
+    const pings = [];
+    for (let i = 0; i < 3; i++) {
+      const start = performance.now();
+      await fetch('/test-download', { method: 'HEAD', cache: 'no-store' });
+      pings.push(performance.now() - start);
+    }
+    metrics.latency = Math.min(...pings); // Use minimum for jitter-free RTT
+
+    // 3. Measure Download Speed (Increased Payload: 4MB)
+    const startDown = performance.now();
+    const downRes = await fetch('/test-download', { cache: 'no-store' });
     const blob = await downRes.blob();
-    const endDown = Date.now();
+    const endDown = performance.now();
+    
     const durationDown = (endDown - startDown) / 1000; // seconds
     const sizeDownBits = blob.size * 8;
-    metrics.download = parseFloat(((sizeDownBits / durationDown) / 1000000).toFixed(2));
+    
+    // Latency-Adjusted Mbps: Account for RTT overhead
+    // For small/mid payloads, we subtract one RTT for request-response start
+    const adjustedDurationDown = Math.max(0.01, durationDown - (metrics.latency / 1000));
+    metrics.download = parseFloat(((sizeDownBits / adjustedDurationDown) / 1000000).toFixed(2));
 
-    // 4. Measure Upload Speed
-    const uploadData = new Uint8Array(256 * 1024); // 256KB
-    const startUp = Date.now();
+    // 4. Measure Upload Speed (Increased Payload: 1MB)
+    const uploadData = new Uint8Array(1024 * 1024); // 1MB
+    const startUp = performance.now();
     await fetch('/test-upload', {
       method: 'POST',
-      body: uploadData
+      body: uploadData,
+      cache: 'no-store'
     });
-    const endUp = Date.now();
+    const endUp = performance.now();
+    
     const durationUp = (endUp - startUp) / 1000;
     const sizeUpBits = uploadData.length * 8;
-    metrics.upload = parseFloat(((sizeUpBits / durationUp) / 1000000).toFixed(2));
+    const adjustedDurationUp = Math.max(0.01, durationUp - (metrics.latency / 1000));
+    metrics.upload = parseFloat(((sizeUpBits / adjustedDurationUp) / 1000000).toFixed(2));
 
     return metrics;
   } catch (err) {
