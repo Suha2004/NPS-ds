@@ -156,37 +156,29 @@ class SpeedtestService:
                 return self.cache[key]
 
         try:
-            st = speedtest.Speedtest(timeout=10)
-            st.get_config()
+            # We measure latency from HF (Cloud) to AWS Mumbai (India)
+            # This is a rock-solid proxy for US-to-India transit time.
+            import httpx
+            import time
             
-            # 1. Use hardcoded IDs for reliable Karnataka servers
-            # 15234: ACT Bangalore, 20822: Jio Bangalore, 2260: Airtel Bangalore
-            target_ids = [15234, 20822, 2260, 48214, 52366] # Major Bangalore/Karnataka hubs
-            
-            # 2. Fetch only these specific servers
-            karnataka_servers = []
-            try:
-                # get_servers() with IDs is much faster and more reliable
-                found_servers = st.get_servers(target_ids)
-                for s_list in found_servers.values():
-                    karnataka_servers.extend(s_list)
-            except Exception as e:
-                print(f"DEBUG: Specific ID fetch failed, searching generally: {e}")
-            
-            if not karnataka_servers:
-                return 0
-            
-            # 3. Measure RTT from HF (US) -> These Specific Targets
-            best = st.get_best_server(karnataka_servers)
-            transit_latency = best.get('latency', 0)
-            
-            print(f"TRIANGULATION TARGET: {best['name']}, {best['country']} (ID: {best['id']}) | Transit: {transit_latency}ms")
+            start = time.perf_counter()
+            with httpx.Client(timeout=2.0) as client:
+                # AWS Mumbai regional endpoint
+                try:
+                    client.get("https://ec2.ap-south-1.amazonaws.com")
+                    transit_latency = (time.perf_counter() - start) * 1000
+                except:
+                    # Fallback to Google India
+                    client.get("https://www.google.co.in")
+                    transit_latency = (time.perf_counter() - start) * 1000
+
+            print(f"TRIANGULATION: Cloud -> India Transit: {transit_latency:.1f}ms")
 
             with self.lock:
                 self.cache[key] = transit_latency
             return transit_latency
         except Exception as e:
-            print(f"Speedtest triangulation failed: {e}")
+            print(f"Transit measurement failed: {e}")
             return 0
 
             with self.lock:
