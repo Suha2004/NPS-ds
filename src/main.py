@@ -138,8 +138,42 @@ class FeedbackRequest(BaseModel):
     outcome: str # success, failed, pending
     metrics: dict
 
+# ----------- SPEEDTEST SERVICE (TRIANGULATION) -----------
+class SpeedtestService:
+    def __init__(self):
+        self.cache = {} # (lat, lon) -> transit_latency
+        self.lock = threading.Lock()
+
+    def get_transit_latency(self, lat: float, lon: float) -> float:
+        """Calculates latency from Cloud Server to User's Region."""
+        # Cache key: round to nearest degree to group regional latencies (~111km)
+        key = (round(lat), round(lon))
+        with self.lock:
+            if key in self.cache:
+                return self.cache[key]
+
+        try:
+            st = speedtest.Speedtest(timeout=5)
+            # Find closest servers to the user's coordinates
+            servers = st.get_closest_servers(lat=lat, lon=lon)
+            if not servers:
+                return 0
+            
+            # The 'latency' field in get_closest_servers is the RTT from 
+            # our current server (HF/AWS) to that specific India-based server.
+            transit_latency = servers[0]['latency']
+            
+            with self.lock:
+                self.cache[key] = transit_latency
+            return transit_latency
+        except Exception as e:
+            print(f"Speedtest triangulation failed: {e}")
+            return 0
+
+speed_service = SpeedtestService()
+
 # ----------- UI LOGIC -----------
-def get_ui_data(quality_score, upi_score, community_alert=False):
+def get_ui_data(quality_score, upi_score, community_alert=False, is_triangulated=False):
     # Force consistency: The Score is the master
     if community_alert or upi_score < 45:
         tier = "poor"
@@ -161,7 +195,10 @@ def get_ui_data(quality_score, upi_score, community_alert=False):
         label = "High Performance"
         from datetime import datetime
         now_str = datetime.now().strftime("%H:%M:%S")
-        upi_label = f"🚀 {now_str} - {upi_score:.1f}%"
+        
+        # Add a star if we successfully used triangulation for a better score
+        prefix = "✨ " if is_triangulated else "🚀 "
+        upi_label = f"{prefix}{now_str} - {upi_score:.1f}%"
         rec = "Safe to proceed with any UPI amount."
         bars = 5
 
@@ -231,10 +268,26 @@ async def predict(req: PredictionRequest):
         # 2. Network Quality Models
         is_verified = False
         live_operator = None
+        is_triangulated = False
         if req.live_metrics:
+            # --- LATENCY TRIANGULATION (FIX FOR REMOTE SERVERS) ---
+            raw_lat = req.live_metrics.get('latency', lat)
+            
+            # Step 1: Calculate "Cloud Transit Time" (HF -> User's Region)
+            transit_time = await asyncio.to_thread(speed_service.get_transit_latency, req.lat, req.lon)
+            
+            # Step 2: Correct the user's latency
+            if transit_time > 0 and raw_lat > transit_time:
+                # Actual Local Latency = Total RTT - Cloud Transit Time
+                # We add a small 5ms buffer for local processing
+                lat = max(5.0, raw_lat - transit_time)
+                is_triangulated = True
+                print(f"TRIANGULATED: Raw {raw_lat}ms -> Local {lat:.1f}ms (Transit: {transit_time:.1f}ms)")
+            else:
+                lat = raw_lat
+
             dn = req.live_metrics.get('download', dn)
             up = req.live_metrics.get('upload', up)
-            lat = req.live_metrics.get('latency', lat)
             live_operator = req.live_metrics.get('operator')
             is_verified = True
 
@@ -329,7 +382,7 @@ async def predict(req: PredictionRequest):
         nearest_tower_data = results[1] if OPENCELL_API_KEY else {}
         status, stale = results[2]
 
-        ui_data = get_ui_data(final_quality, upi_score, has_alert)
+        ui_data = get_ui_data(final_quality, upi_score, has_alert, is_triangulated)
         best_operator = nearest_tower_data.get("operator", "Unknown") if nearest_tower_data else "Unknown"
 
         # 3. Bank Status Override
@@ -356,14 +409,15 @@ async def predict(req: PredictionRequest):
             "recommendation": ui_data["rec"], "confidence": f"{(final_quality + 1) * 30}%", 
             "best_network": best_operator if best_operator != "Unknown" else (live_operator or "Airtel / Jio"),
             "bank_warning": bank_warning,
-            "server_version": "v4.4",
+            "server_version": "v4.5",
             "metrics": { 
                 "download": f"{dn:.2f} Mbps", 
                 "upload": f"{up:.2f} Mbps",
                 "latency": f"{lat:.1f} ms",
                 "is_verified": is_verified,
                 "operator": live_operator or best_operator,  # 🟢 Badge shows current SIM (fallback to tower)
-                "tower_count": nearest_tower_data.get("total_towers_found", 0)
+                "tower_count": nearest_tower_data.get("total_towers_found", 0),
+                "is_triangulated": is_triangulated
             },
             "community_alert": has_alert
         }
