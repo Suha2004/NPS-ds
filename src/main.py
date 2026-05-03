@@ -1,4 +1,5 @@
 from dotenv import load_dotenv
+print("--- NETPAYSENSE BACKEND STARTING ---")
 load_dotenv()  # Must be first — loads SUPABASE_URL and SUPABASE_KEY from .env
 
 from fastapi import FastAPI, HTTPException, Request
@@ -20,8 +21,8 @@ import threading
 import asyncio
 import speedtest
 import math
-from datetime import datetime, timedelta
-from typing import Optional, List, Dict
+from datetime import datetime, timedelta, timezone
+from typing import Optional, List, Dict, Union
 import pandas as pd
 import numpy as np
 import geopandas as gpd
@@ -68,6 +69,7 @@ async def startup_event():
     # Run the first scrape immediately in a separate thread so it doesn't block API startup
     threading.Thread(target=fetch_bank_health, daemon=True).start()
 
+print("LOADING KARNATAKA BOUNDARY...")
 # Load Karnataka Boundary
 gdf = gpd.read_file(DATA_PATH / "IndiaStatesBoundaryShapes/India_State_Boundary.shp")
 gdf = gdf.to_crs(epsg=4326) # converts to lat/lon
@@ -95,15 +97,18 @@ class OoklaNN(nn.Module):
     def forward(self, x):
         return self.network(x)
 
+print("LOADING OOKLA MODEL...")
 # Load Models
 ookla_model = OoklaNN(input_size=5)
 ookla_model.load_state_dict(torch.load(MODEL_PATH / 'ookla_nn.pth', weights_only=True))
 ookla_model.eval()
 ookla_scaler = joblib.load(MODEL_PATH / 'ookla_scaler.pkl')
 
+print("LOADING SIGNAL MODEL...")
 # Load Model 2 (Local Signal)
 signal_model = joblib.load(MODEL_PATH / 'signal_xgb.pkl')
 
+print("LOADING LOOK-UP DATA (160MB)...")
 # Load Look-up Data for Model 1 (Nearest Neighbor search)
 look_up_df = pd.read_csv(DATA_PATH / 'final_dataset.csv')
 look_up_df['download_mbps'] = look_up_df['avg_d_kbps'] / 1000
@@ -115,6 +120,7 @@ look_up_df = look_up_df[
     (look_up_df['latency_ms'] > 0)
 ]
 
+print("BUILDING KDTREE...")
 coords = look_up_df[['lat', 'lon']].values
 tree = KDTree(coords)
 
@@ -140,7 +146,10 @@ class FeedbackRequest(BaseModel):
     lat: float
     lon: float
     outcome: str # success, failed, pending
-    metrics: dict
+    latency: Optional[Union[float, str]] = None
+    download: Optional[Union[float, str]] = None
+    upload: Optional[Union[float, str]] = None
+    operator: Optional[str] = None
 
 # ----------- SPEEDTEST SERVICE (TRIANGULATION) -----------
 class SpeedtestService:
@@ -504,10 +513,10 @@ async def bank_status():
             return {"banks": [], "problematic_banks": [], "last_updated": None}
 
         df = pd.DataFrame(response.data)
-        df['timestamp'] = pd.to_datetime(df['timestamp']).dt.tz_localize(None)
+        df['timestamp'] = pd.to_datetime(df['timestamp'], utc=True)
         latest_df = df.drop_duplicates(subset=["bank_name"], keep="first")
 
-        current_time = datetime.now()
+        current_time = datetime.now(timezone.utc)
         banks = []
         for _, row in latest_df.iterrows():
             upi_raw = str(row.get("upi", "UP")).strip().upper()
@@ -515,8 +524,9 @@ async def bank_status():
             icon = "❌" if status == "DOWN" else ("⚠️" if status == "FLUCTUATING" else "✅")
             
             ts = row["timestamp"]
+            # Ensure ts is timezone-aware for comparison
             stale = (current_time - ts).total_seconds() / 60 > 20 if pd.notna(ts) else True
-            banks.append({"bank": row["bank_name"], "status": status, "icon": icon, "timestamp": str(ts), "stale": stale})
+            banks.append({"bank": row["bank_name"], "status": status, "icon": icon, "timestamp": str(ts.isoformat()), "stale": stale})
 
         # Sort: Issues first
         order = {"DOWN": 0, "FLUCTUATING": 1, "UP": 2}
@@ -578,11 +588,11 @@ def get_all_feedback() -> pd.DataFrame:
     if supabase is None:
         return pd.DataFrame()
     try:
-        # Fetch rows from last 24 hours to keep query fast
-        threshold = (datetime.now() - timedelta(hours=24)).isoformat()
+        # Fetch rows from last 24 hours to keep query fast (UTC)
+        threshold = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
         response = (
             supabase.table("feedback")
-            .select("lat, lon, outcome, metrics, timestamp")
+            .select("lat, lon, outcome, latency, download, upload, operator, timestamp")
             .gte("timestamp", threshold)
             .execute()
         )
@@ -591,11 +601,21 @@ def get_all_feedback() -> pd.DataFrame:
             return pd.DataFrame()
         df = pd.DataFrame(rows)
         df['timestamp'] = pd.to_datetime(df['timestamp'], errors='coerce', utc=True)
-        df['timestamp'] = df['timestamp'].dt.tz_localize(None)  # strip tz for comparison
         return df.dropna(subset=['timestamp'])
     except Exception as e:
         print(f"Supabase fetch error: {e}")
         return pd.DataFrame()
+
+
+@app.get("/feedback")
+async def get_feedback_api():
+    """Returns recent feedback from Supabase."""
+    df = get_all_feedback()
+    if df.empty:
+        return {"feedback": []}
+    # Convert timestamp to string for JSON serialization
+    df['timestamp'] = df['timestamp'].dt.isoformat()
+    return {"feedback": df.to_dict(orient="records")}
 
 
 def check_nearby_failures(lat, lon, radius_km=2.0):
@@ -603,9 +623,10 @@ def check_nearby_failures(lat, lon, radius_km=2.0):
         df = get_all_feedback()
         if df.empty: return False
 
-        # 30-minute window
-        threshold = datetime.now() - timedelta(minutes=30)
+        # 30-minute window in UTC
+        threshold = datetime.now(timezone.utc) - timedelta(minutes=30)
         recent_failed = df[df['outcome'] == 'failed'].copy()
+        # Both are now timezone-aware UTC
         recent_failed = recent_failed[recent_failed['timestamp'] >= threshold]
 
         print(f"DEBUG: Checking alerts near {lat}, {lon}")
@@ -633,21 +654,48 @@ def check_nearby_failures(lat, lon, radius_km=2.0):
 
 @app.post("/feedback")
 async def submit_feedback(req: FeedbackRequest):
-    """Store user feedback in Supabase."""
-    if supabase is None:
+    """Store user feedback in Supabase using httpx directly to avoid client hangs."""
+    url = os.getenv("SUPABASE_URL")
+    key = os.getenv("SUPABASE_KEY")
+    if not url or not key:
         raise HTTPException(status_code=503, detail="Feedback storage not configured. Set SUPABASE_URL and SUPABASE_KEY in .env")
     try:
+        import httpx
+        import re
+        
+        def parse_val(val):
+            if isinstance(val, str):
+                match = re.search(r"(\d+\.?\d*)", val)
+                return float(match.group(1)) if match else None
+            return val
+
         record = {
             "lat":      req.lat,
             "lon":      req.lon,
             "outcome":  req.outcome,
-            "metrics":  req.metrics,   # stored as JSONB
-            "timestamp": datetime.now().isoformat(),
+            "latency":  parse_val(req.latency),
+            "download": parse_val(req.download),
+            "upload":   parse_val(req.upload),
+            "operator": req.operator,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         }
-        supabase.table("feedback").insert(record).execute()
+        
+        headers = {
+            "apikey": key,
+            "Authorization": f"Bearer {key}",
+            "Content-Type": "application/json",
+            "Prefer": "return=minimal"
+        }
+        
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            res = await client.post(f"{url}/rest/v1/feedback", headers=headers, json=record)
+            res.raise_for_status()
+            
         return {"status": "recorded"}
     except Exception as e:
-        print(f"Supabase insert error: {e}")
+        print(f"Feedback insert error: {e}")
+        if hasattr(e, 'response') and e.response:
+            print(f"Details: {e.response.text}")
         raise HTTPException(status_code=500, detail=f"Failed to save feedback: {e}")
 
 # ----------- FRONTEND -----------

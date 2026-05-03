@@ -166,6 +166,31 @@ def fetch_bank_health():
         else:
             print(">>> [DEBUG] ERROR: Supabase client not initialized, skipping save.")
             logging.error("Supabase client not initialized, skipping save.")
+
+        # Save to CSV
+        try:
+            file_exists = os.path.isfile(CSV_FILE)
+            with open(CSV_FILE, mode='a', newline='', encoding='utf-8') as f:
+                writer = csv.writer(f)
+                if not file_exists:
+                    writer.writerow(['timestamp', 'bank_name', 'internet_banking', 'rtgs', 'neft', 'imps', 'upi', 'mobile_banking'])
+                for bank in data:
+                    writer.writerow([
+                        timestamp,
+                        bank["bank_name"],
+                        bank.get("Internet Banking", "?"),
+                        bank.get("RTGS", "?"),
+                        bank.get("NEFT", "?"),
+                        bank.get("IMPS", "?"),
+                        bank.get("UPI", "?"),
+                        bank.get("Mobile Banking", "?")
+                    ])
+            print(f">>> [DEBUG] Saved {len(data)} banks to CSV successfully!")
+            logging.info(f"Saved {len(data)} banks to CSV")
+        except Exception as csv_err:
+            print(f">>> [DEBUG] Error saving to CSV: {csv_err}")
+            logging.error(f"Error saving to CSV: {csv_err}")
+
         return True
     except Exception as e:
         import traceback
@@ -209,8 +234,8 @@ def get_bank_upi_status(bank_name: str):
         latest = data[0]
         status = str(latest.get("upi", "UP")).upper()
         
-        ts = pd.to_datetime(latest["timestamp"]).tz_localize(None)
-        current_time = datetime.now()
+        ts = pd.to_datetime(latest["timestamp"], utc=True)
+        current_time = datetime.now(timezone.utc)
         stale = (current_time - ts).total_seconds() / 60 > STALE_THRESHOLD_MINUTES
         
         return status, stale
@@ -235,10 +260,10 @@ def get_problematic_banks():
         if not response.data: return []
         
         df = pd.DataFrame(response.data)
-        df['timestamp'] = pd.to_datetime(df['timestamp']).dt.tz_localize(None)
+        df['timestamp'] = pd.to_datetime(df['timestamp'], utc=True)
         latest_df = df.drop_duplicates(subset=["bank_name"], keep="first")
 
-        current_time = datetime.now()
+        current_time = datetime.now(timezone.utc)
         result = []
 
         for _, row in latest_df.iterrows():
@@ -267,7 +292,7 @@ def clean_old_data():
     """Removes data older than 24 hours from Supabase."""
     try:
         if not supabase: return
-        cutoff = (datetime.now() - timedelta(hours=DATA_RETENTION_HOURS)).isoformat()
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=DATA_RETENTION_HOURS)).isoformat()
         supabase.table("bank_health").delete().lt("timestamp", cutoff).execute()
         logging.info("Cleanup successful: removed old data from Supabase.")
     except Exception as e:
